@@ -1,0 +1,62 @@
+cabal-version:      3.0
+name:               NineP2000
+version:            0.1.0.0
+-- synopsis:
+-- description:
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             James Hobson
+maintainer:         james@hobson.space
+-- copyright:
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+-- extra-source-files:
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import:           warnings
+    exposed-modules:
+      Network.NineP.Monad
+      Network.NineP.Server
+    default-extensions: StrictData
+    other-modules:
+      Network.NineP.Handler
+      Network.NineP.Effects
+      Network.NineP.Effects.Error
+      Network.NineP.Effects.RunState
+      Network.NineP.Effects.Msg
+    -- other-extensions:
+    build-depends:    base ^>=4.16.4.0,
+                      NineP,
+                      mtl,
+                      effectful-core,
+                      effectful-th,
+                      stm,
+                      network-run,
+                      network,
+                      attoparsec,
+                      text,
+                      binary,
+                      exceptions,
+                      bytestring,
+                      containers
+    hs-source-dirs:   src
+    default-language: Haskell2010
+
+test-suite NineP-Monad-test
+    import:           warnings
+    default-language: Haskell2010
+    -- other-modules:
+    -- other-extensions:
+    type:             detailed-0.9
+    test-module:      Tests
+    hs-source-dirs:   test
+    build-depends:
+        base ^>=4.16.4.0,
+        Cabal,
+        QuickCheck,
+        cabal-detailed-quickcheck,
+        NineP-Monad
