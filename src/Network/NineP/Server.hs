@@ -49,10 +49,10 @@ instance Show BindAddr where
 
 
 serveFileSystem :: MonadIO m => FSServerConf -> FileSystem () -> m ()
-serveFileSystem conf = hoistFileSystemServer conf liftIO
+serveFileSystem conf = hoistFileSystemServer conf id
 
-hoistFileSystemServer :: (MonadIO n, MonadIO m) => FSServerConf -> (forall x . n x -> m x) -> FileSystemT n () -> m ()
-hoistFileSystemServer FSServerConf{..} _ _ = runServer bindAddr $ \sock -> runAppThrow sock $ fix $ \loop -> do
+hoistFileSystemServer :: (MonadIO n, MonadIO m) => FSServerConf -> (forall x . n x -> IO x) -> FileSystemT n () -> m ()
+hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> runAppThrow sock fs hoist $ fix $ \loop -> do
   -- TODO: Catch
   recvMsg >>= handleRequest
   loop
@@ -77,4 +77,3 @@ runUnixServer fp server = E.bracket openSock close loop
 runServer :: (MonadIO m) => BindAddr -> (Socket -> IO a) -> m a
 runServer (Tcp host port) = liftIO . runTCPServer (Just host) (show port)
 runServer (UnixDomain fp) = liftIO . runUnixServer fp
-

@@ -45,6 +45,7 @@ library
                       containers
     hs-source-dirs:   src
     default-language: Haskell2010
+    ghc-options: -fprint-potential-instances
 
 test-suite NineP-Monad-test
     import:           warnings
@@ -60,3 +61,13 @@ test-suite NineP-Monad-test
         QuickCheck,
         cabal-detailed-quickcheck,
         NineP2000
+
+
+executable Example
+  import: warnings
+  default-language: Haskell2010
+  hs-source-dirs: example
+  main-is: Main.hs
+  build-depends:
+    base,
+    NineP2000

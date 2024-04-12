@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedLabels, PatternSynonyms, ViewPatterns #-}
+{-# LANGUAGE OverloadedLabels, PatternSynonyms, ViewPatterns, RankNTypes, TypeApplications, ScopedTypeVariables #-}
 
 module Network.NineP.Handler where
 
@@ -11,15 +11,15 @@ import Data.Bits
 
 import qualified Data.ByteString.Lazy as B
 
-handleErr :: CallStack -> NPError -> App ()
+handleErr :: CallStack -> NPError -> App n ()
 handleErr _ (Proto tag e) = sendMsg $ Msg TRerror tag $ Rerror e
 handleErr _ e         = throwError e
 
-handleRequest :: Msg -> App ()
+handleRequest :: Msg -> App n ()
 handleRequest (Msg typ tag body) = handleTyp typ tag body `catchError` handleErr
 {-# INLINE handleRequest #-}
 
-handleTyp :: Tag -> Word16 -> VarMsg -> App ()
+handleTyp :: Tag -> Word16 -> VarMsg -> App n ()
 handleTyp TTversion tag body = handleTVersion tag body
 handleTyp TTauth    tag body = handleTAuth    tag body
 handleTyp TTattach  tag body = handleTAttach  tag body
@@ -32,21 +32,21 @@ handleTyp TTwrite   tag body = handleTWrite   tag body
 handleTyp _ tag _ = throwError $ Proto tag "Can't handle this kind of message"
 {-# INLINE handleTyp #-}
 
-handleTVersion :: Word16 -> VarMsg -> App ()
+handleTVersion :: Word16 -> VarMsg -> App n ()
 handleTVersion tag (Tversion msize _) = do
   setMsgSize (min msize 4096)
   sendMsg $ Msg TRversion tag (Rversion 4096 "9P2000")
 handleTVersion tag _ = throwError $ Proto tag "Malformed Request"
 {-# INLINE handleTVersion #-}
 
-handleTAuth :: Word16 -> VarMsg -> App ()
+handleTAuth :: Word16 -> VarMsg -> App n ()
 handleTAuth tag _ = throwError $ Proto tag "Auth not required"
 {-# INLINE handleTAuth #-}
 
-handleTAttach :: Word16 -> VarMsg -> App ()
+handleTAttach :: forall n . Word16 -> VarMsg -> App n ()
 handleTAttach tag (Tattach fid _ uname _) = do
-  setName uname
-  root <- getRoot
+  setName @n uname
+  root <- getRoot @n
   case root of
     Leaf _ _ -> throwError $ NPError "Root must be a dir"
     branch   -> do
@@ -56,10 +56,10 @@ handleTAttach tag (Tattach fid _ uname _) = do
  
 handleTAttach tag _ = throwError $ Proto tag "Malformed Request"
 
-handleTFlush :: Word16 -> VarMsg -> App ()
+handleTFlush :: Word16 -> VarMsg -> App n ()
 handleTFlush = undefined
 
-handleTWalk :: Word16 -> VarMsg -> App ()
+handleTWalk :: Word16 -> VarMsg -> App n ()
 handleTWalk tag (Twalk _ _ []) = throwError $ Proto tag "Empty walk"
 handleTWalk tag (Twalk fid newFid path) = do
   dir <- getFid fid
@@ -68,7 +68,7 @@ handleTWalk tag (Twalk fid newFid path) = do
   sendMsg $ Msg TRwalk tag $ Rwalk qids
 
   where
-    walk :: FileTree m () -> [String] -> App (FileTree m (), [Qid])
+    walk :: FileTree n () -> [String] -> App n (FileTree n (), [Qid])
     walk ft [] = do
       qid <- getQid ft
       return (ft, [qid])
@@ -83,13 +83,13 @@ handleTWalk tag (Twalk fid newFid path) = do
           return (nFt, qid : qids)
 handleTWalk tag _ = throwError $ Proto tag "Malformed Request"
 
-handleTOpen :: Word16 -> VarMsg -> App ()
+handleTOpen :: forall n . Word16 -> VarMsg -> App n ()
 handleTOpen tag (Topen fid mode) = do
-  file' <- getFid fid
+  file' <- getFid @n fid
   case file' of
     Branch {}   -> throwError $ Proto tag "Can't open dir"
     Leaf _ file -> do
-      uname <- getName
+      uname <- getName @n
       if checkPerms file' uname mode
          then do
            qid <- getQid file'
@@ -99,35 +99,36 @@ handleTOpen tag (Topen fid mode) = do
          
 handleTOpen tag _ = throwError $ Proto tag "Malformed Request"
 
-handleTCreate :: Word16 -> VarMsg -> App ()
+handleTCreate :: Word16 -> VarMsg -> App n ()
 handleTCreate tag (Tcreate fid name perm mode) = throwError $ Proto tag "Not implemented"
 handleTCreate tag _ = throwError $ Proto tag "Malformed Request"
 
-handleTRead :: Word16 -> VarMsg -> App ()
+handleTRead :: forall n . Word16 -> VarMsg -> App n ()
 handleTRead tag (Tread fid (fromIntegral -> offset) (fromIntegral -> count)) = do
-  f <- getOpenFile fid ModeRead
+  f <- getOpenFile @n fid ModeRead
   let r = fileRead f
   res <- case r of
-           Just (Reader reader) -> B.take count <$> B.drop offset <$> execFOP reader
+           Just (Reader reader) -> B.take count . B.drop offset <$> execFOP reader
            _                    -> throwError $ Proto tag "Reading not allowed"
   sendMsg $ Msg TRread tag $ Rread res
 handleTRead tag _ = throwError $ Proto tag "Malformed request"
 
-handleTWrite :: Word16 -> VarMsg -> App ()
+handleTWrite :: Word16 -> VarMsg -> App n ()
 handleTWrite tag _ = throwError $ Proto tag "Not implemented"
 
 
-lookupName :: FileTree m a -> String -> Maybe (FileTree m a)
-lookupName (Leaf   _ _)      _  = Nothing
+lookupName :: FileTree n a -> String -> Maybe (FileTree n a)
+lookupName (Leaf _ _)        _  = Nothing
 lookupName (Branch _ _ tree) fn = find (\ft -> getProp #name ft == fn) tree
 {-# INLINE lookupName #-}
 
+pattern ModeRead, ModeWrite, ModeRW, ModeExec :: Word8
 pattern ModeRead  = 0
 pattern ModeWrite = 1
 pattern ModeRW    = 2
 pattern ModeExec  = 3
 
-checkPerms :: FileTree m a -> String -> Word8 -> Bool
+checkPerms :: FileTree n a -> String -> Word8 -> Bool
 checkPerms ft uname mode = case mode of
                               ModeRead  -> canRead
                               ModeWrite -> canWrite
