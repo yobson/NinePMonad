@@ -59,4 +59,4 @@ test-suite NineP-Monad-test
         Cabal,
         QuickCheck,
         cabal-detailed-quickcheck,
-        NineP-Monad
+        NineP2000
