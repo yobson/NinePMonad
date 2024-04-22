@@ -7,11 +7,8 @@ import Network.NineP.Server
 
 fs :: FileSystem ()
 fs = dir "/" $ do
-  file "welcome" [#perms := 0o664, #owner := "jameshobson"]
-    (Reader (return "Welcome to my haskell 9p library"))
-    (Writer (\_ -> return ()))
-  file "bye!" $
-    Reader $ return "Bye!"
+  file "hello" [#owner := "jameshobson"]
+    (Reader $ return "Hello, World!")
 
 conf :: FSServerConf
 conf = FSServerConf

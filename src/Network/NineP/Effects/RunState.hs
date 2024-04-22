@@ -10,6 +10,7 @@
   , RankNTypes
   , ViewPatterns
   , AllowAmbiguousTypes
+  , TemplateHaskell
 #-}
 
 module Network.NineP.Effects.RunState
@@ -39,6 +40,10 @@ import Control.Exception (IOException)
 import Control.Monad.Catch (catch)
 import Control.Monad
 import Network.NineP.Monad
+
+import Lens.Micro
+import Lens.Micro.TH
+import Lens.Micro.Effectful
 
 data LocalState n :: Effect where
   SetName :: String -> LocalState n m ()
@@ -82,14 +87,16 @@ execFOP :: (LocalState n :> es) => n a -> Eff es a
 execFOP = send . ExecFOP
 
 data RunState n = RunState
-  { uname :: String
-  , fidMap :: Map.Map Word32 (FileTree n ())
+  { _uname :: String
+  , _fidMap :: Map.Map Word32 (FileTree n ())
   }
+
+makeLenses ''RunState
 
 initialState :: RunState n
 initialState = RunState
-  { uname = ""
-  , fidMap = Map.empty
+  { _uname = ""
+  , _fidMap = Map.empty
   }
 
 type m ~> n = forall x . m x -> n x
@@ -101,15 +108,18 @@ adapt hoist (hoist -> m) = liftIO m
 
 runLocalState :: forall es m a . (HasCallStack, IOE :> es, Monad m, Error NPError :> es) => FileSystemT m () -> (m ~> IO) -> Eff (LocalState m : es) a -> Eff es a
 runLocalState fs hoist = reinterpret (evalState $ initialState @m) $ \_ -> \case
-  SetName name -> modify $ \(s :: RunState m) -> s {uname = name}
+  SetName name -> modify $ \(s :: RunState m) -> s {_uname = name}
   GetRoot      -> do
     (_,fts) <- adapt hoist $ runFileSystemT fs
     when (length fts /= 1) $
       throwError $ NPError "File system does not have single root!"
     return $ head fts
-  InsertFid fid ft -> do
-    fMap <- gets fidMap
-    let nMap = Map.insert fid ft fMap
-    modify $ \s -> s {fidMap = nMap}
+  InsertFid fid ft -> fidMap %= Map.insert fid ft
+
+  GetQid ft -> undefined
+  GetFid ft -> undefined
+  GetName -> undefined
+  OpenFile fid f mode -> undefined
+  GetOpenFile fid mode -> undefined
 
   ExecFOP fop -> adapt hoist fop
