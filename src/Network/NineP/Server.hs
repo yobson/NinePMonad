@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards #-}
+{-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards, TypeApplications #-}
 
 module Network.NineP.Server where
 
@@ -20,8 +20,9 @@ import Network.NineP.Monad
 import Network.NineP.Handler
 import Network.NineP.Effects
 
-newtype FSServerConf = FSServerConf
-  { bindAddr :: BindAddr
+data FSServerConf = FSServerConf
+  { bindAddr  :: BindAddr
+  , debugLogs :: Bool
   }
 
 data BindAddr = UnixDomain FilePath | Tcp HostName Word16
@@ -52,10 +53,12 @@ serveFileSystem :: MonadIO m => FSServerConf -> FileSystem () -> m ()
 serveFileSystem conf = hoistFileSystemServer conf id
 
 hoistFileSystemServer :: (MonadIO n, MonadIO m) => FSServerConf -> (forall x . n x -> IO x) -> FileSystemT n () -> m ()
-hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> runAppThrow sock fs hoist $ fix $ \loop -> do
-  -- TODO: Catch
-  recvMsg >>= handleRequest
-  loop
+hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> runAppThrow debugLogs sock fs hoist $ fix $ \loop -> do
+  msg <- recvMsg
+  res <- tryError @NPError $ handleRequest msg
+  case res of
+    Left (_,e) -> logMsg Fatal $ "Thread closed due to error: " <> show e
+    Right _    -> loop
 
 runUnixServer :: FilePath -> (Socket -> IO a) -> IO a
 runUnixServer fp server = E.bracket openSock close loop

@@ -60,19 +60,22 @@ handleTFlush :: Word16 -> VarMsg -> App n ()
 handleTFlush = undefined
 
 handleTWalk :: Word16 -> VarMsg -> App n ()
-handleTWalk tag (Twalk _ _ []) = throwError $ Proto tag "Empty walk"
 handleTWalk tag (Twalk fid newFid path) = do
+  logMsg Info "Walk MSG"
   dir <- getFid fid
+  logMsg Info "Got Fid"
   (newDir, qids) <- walk dir path
   insertFid newFid newDir
   sendMsg $ Msg TRwalk tag $ Rwalk qids
 
   where
-    walk :: FileTree n () -> [String] -> App n (FileTree n (), [Qid])
+    walk :: FileTree n Qid -> [String] -> App n (FileTree n Qid, [Qid])
     walk ft [] = do
+      logMsg Info "End of walk"
       qid <- getQid ft
       return (ft, [qid])
     walk ft (x:xs) = do
+      logMsg Info "walking"
       case lookupName ft x of
         Nothing -> do
           qid <- getQid ft
@@ -113,8 +116,14 @@ handleTRead tag (Tread fid (fromIntegral -> offset) (fromIntegral -> count)) = d
   sendMsg $ Msg TRread tag $ Rread res
 handleTRead tag _ = throwError $ Proto tag "Malformed request"
 
-handleTWrite :: Word16 -> VarMsg -> App n ()
-handleTWrite tag _ = throwError $ Proto tag "Not implemented"
+handleTWrite :: forall n . Word16 -> VarMsg -> App n ()
+handleTWrite tag (Twrite fid (fromIntegral -> offset) dat) = do
+  f <- getOpenFile @n fid ModeWrite
+  case fileWrite f of
+    Just (Writer writer) -> execFOP (writer dat)
+    _                    -> throwError $ Proto tag "Writing not allowed"
+  sendMsg $ Msg TRwrite tag $ Rwrite $ fromIntegral $ B.length dat
+handleTWrite tag _ = throwError $ Proto tag "Malformed Request"
 
 
 lookupName :: FileTree n a -> String -> Maybe (FileTree n a)

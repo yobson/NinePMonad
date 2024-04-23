@@ -28,6 +28,7 @@ library
       Network.NineP.Effects.Error
       Network.NineP.Effects.RunState
       Network.NineP.Effects.Msg
+      Network.NineP.Effects.Logger
     -- other-extensions:
     build-depends:    base ^>=4.16.4.0,
                       NineP,

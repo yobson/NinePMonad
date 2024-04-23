@@ -13,6 +13,7 @@ fs = dir "/" $ do
 conf :: FSServerConf
 conf = FSServerConf
   { bindAddr = UnixDomain "/tmp/example.sock"
+  , debugLogs = True
   }
 
 main :: IO ()

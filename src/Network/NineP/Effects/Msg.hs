@@ -33,6 +33,7 @@ import qualified Data.ByteString.Lazy as BL
 import GHC.Int
 
 import Network.NineP.Effects.Error
+import Network.NineP.Effects.Logger
 
 data NPMsg   :: Effect where
   RecvMsg    :: NPMsg m N.Msg
@@ -62,7 +63,7 @@ initialState :: LocalState
 initialState = LState BL.empty 4096
 
 runMsgHandle 
-  :: (HasCallStack, IOE :> es, Error NPError :> es) => Socket -> Eff (NPMsg : es) a -> Eff es a
+  :: (HasCallStack, IOE :> es, Error NPError :> es, Logger :> es) => Socket -> Eff (NPMsg : es) a -> Eff es a
 runMsgHandle sock = reinterpret (evalState initialState) $ \_ -> \case
   RecvMsg -> do
     residual <- gets leftOver
@@ -72,6 +73,8 @@ runMsgHandle sock = reinterpret (evalState initialState) $ \_ -> \case
     case result of --TODO: Better Errors
       Fail {}      -> throwError $ NPError "msg decode error"
       Partial _    -> throwError $ NPError "Impossible state"
-      Done res _ x -> modify (\s -> s{leftOver = BL.fromStrict res}) >> return x
-  SendMsg msg -> adapt $ sendAll sock $ runPut (N.put msg)
+      Done res _ x -> modify (\s -> s{leftOver = BL.fromStrict res}) >> logProto x >> return x
+  SendMsg msg -> do
+    logProto msg
+    adapt $ sendAll sock $ runPut (N.put msg)
   SetMsgSize w -> modify $ \s -> s{msgSize = fromIntegral w}
