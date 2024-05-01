@@ -26,6 +26,7 @@ data FSServerConf = FSServerConf
   }
 
 data BindAddr = UnixDomain FilePath | Tcp HostName Word16
+  deriving Eq
 
 ninePBindFmt :: Parser BindAddr
 ninePBindFmt =  UnixDomain <$> (asciiCI "unix!" *> filePathFmt)

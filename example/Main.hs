@@ -4,15 +4,17 @@ module Main where
 
 import Network.NineP.Monad
 import Network.NineP.Server
+import Control.Monad.IO.Class
 
-fs :: FileSystem ()
+fs :: (MonadIO m) => FileSystemT m ()
 fs = dir "/" $ do
   file "hello" [#owner := "jameshobson"]
     (Reader $ return "Hello, World!")
+    (Writer $ \_ -> return ())
 
 conf :: FSServerConf
 conf = FSServerConf
-  { bindAddr = UnixDomain "/tmp/example.sock"
+  { bindAddr = "unix!/tmp/example.sock"
   , debugLogs = True
   }
 
