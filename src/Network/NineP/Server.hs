@@ -1,6 +1,22 @@
 {-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards, TypeApplications #-}
 
-module Network.NineP.Server where
+{-|
+Module      : Network.NineP.Server
+Description : Running file system servers
+Maintainer  : james@hobson.space
+Copyright   : (c) James Hobson, 2024
+Stability   : experimental
+Portability : POSIX
+-}
+
+module Network.NineP.Server
+( serveFileSystem
+, hoistFileSystemServer
+, BindAddr(..)
+, FSServerConf(..)
+, LogLevel(..)
+)
+where
 
 import Effectful
 import Data.Word
@@ -20,9 +36,11 @@ import Network.NineP.Monad
 import Network.NineP.Handler
 import Network.NineP.Effects
 
+-- | Server configuration
 data FSServerConf = FSServerConf
-  { bindAddr  :: BindAddr
-  , debugLogs :: Bool
+  { bindAddr  :: BindAddr    -- ^ Has a 'IsString' instance. You can provide a string such as @"tcp!192.168.2.4!8080"@
+  , logProt   :: Bool        -- ^ Log protocol messages over standard output
+  , logLevels :: [LogLevel]  -- ^ Specify what kind of message to log
   }
 
 data BindAddr = UnixDomain FilePath | Tcp HostName Word16
@@ -50,11 +68,13 @@ instance Show BindAddr where
   show (Tcp ip port)   = "tcp!"  <> ip <> "!" <> show port
 
 
+-- | Host file server defined in terms of 'FileSystem'
 serveFileSystem :: MonadIO m => FSServerConf -> FileSystem () -> m ()
 serveFileSystem conf = hoistFileSystemServer conf id
 
+-- | Host file server defined on arbitary monad by providing a natural transformation
 hoistFileSystemServer :: (MonadIO n, MonadIO m) => FSServerConf -> (forall x . n x -> IO x) -> FileSystemT n () -> m ()
-hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> runAppThrow debugLogs sock fs hoist $ fix $ \loop -> do
+hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> runAppThrow logProt logLevels sock fs hoist $ fix $ \loop -> do
   msg <- recvMsg
   res <- tryError @NPError $ handleRequest msg
   case res of

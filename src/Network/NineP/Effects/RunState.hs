@@ -13,6 +13,14 @@
   , TemplateHaskell
 #-}
 
+{-|
+Module      : Network.NineP.Effects.RunState
+Description : Internal state of server
+Maintainer  : james@hobson.space
+Copyright   : (c) James Hobson, 2024
+Portability : POSIX
+-}
+
 module Network.NineP.Effects.RunState
 ( LocalState
 , runLocalState
@@ -21,6 +29,7 @@ module Network.NineP.Effects.RunState
 , insertFid
 , getQid
 , getFid
+, forgetFid
 , getName
 , openFile
 , getOpenFile
@@ -42,7 +51,6 @@ import Control.Monad.Catch (catch)
 import Control.Monad
 import Network.NineP.Monad
 
-import Lens.Micro
 import Lens.Micro.TH
 import Lens.Micro.Effectful
 
@@ -54,6 +62,7 @@ data LocalState n :: Effect where
   GetFid    :: Word32 -> LocalState n m (FileTree n Qid)
   GetName  :: LocalState n m String
   OpenFile :: Word32 -> File n -> Word8 -> LocalState n m ()
+  ForgetFid :: Word32 -> LocalState n m ()
   GetOpenFile :: Word32 -> Word8 -> LocalState n m (File n)
   ExecFOP :: n a -> LocalState n m a
 
@@ -74,6 +83,9 @@ getQid = send . GetQid
 
 getFid :: (LocalState n :> es) => Word32 -> Eff es (FileTree n Qid)
 getFid = send . GetFid
+
+forgetFid :: forall n es . (LocalState n :> es) => Word32 -> Eff es ()
+forgetFid fid = send $ ForgetFid @n fid
 
 getName :: forall n es . (LocalState n :> es) => Eff es String
 getName = send $ GetName @n
@@ -160,8 +172,8 @@ annotateFT (Leaf _ f) = do
   return $ Leaf (Qid 0 0 c) f
 annotateFT (Branch _ d ch) = do
   modifying @(RunState m) qidCount (+1)
-  children <- mapM annotateFT ch
   c <- use @(RunState m) qidCount
+  children <- mapM annotateFT ch
   logMsg Info $ concat ["Setting dir ", dirName d, " to have ", show (Qid 0x80 0 c)]
   return $ Branch (Qid 0x80 0 c) d children
 
@@ -193,7 +205,10 @@ runLocalState fs hoist = reinterpret (evalState $ initialState @m fs) $ \_ -> \c
     lft <- annotateFS hoist lfs
     localFT ?= lft
     return lft
-  InsertFid fid ft -> modifying @(RunState m) fidMap (Map.insert fid (theQid ft))
+  InsertFid fid ft -> do
+    let q = theQid ft
+    logMsg Info $ "FidMap[" <> show fid <> "] = " <> show q
+    modifying @(RunState m) fidMap (Map.insert fid q)
 
   GetQid ft -> return $ theQid ft
   GetFid fid -> do
@@ -209,6 +224,9 @@ runLocalState fs hoist = reinterpret (evalState $ initialState @m fs) $ \_ -> \c
         ft <- lookupQid qid
         logMsg Info "Found it!"
         return ft
+  ForgetFid fid -> do
+    logMsg Info $ "fidMap[" <> show fid <> "] = _"
+    modifying @(RunState m) fidMap (Map.delete fid)
   GetName -> use @(RunState m) uname
   OpenFile fid f mode -> do
     -- TODO: Move perms check here

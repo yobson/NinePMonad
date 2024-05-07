@@ -1,5 +1,11 @@
 {-# LANGUAGE DataKinds, TypeApplications, RankNTypes, TypeOperators #-}
 
+{-|
+Module      : Network.NineP.Effects
+Maintainer  : james@hobson.space
+Copyright   : (c) James Hobson, 2024
+Portability : POSIX
+-}
 
 module Network.NineP.Effects
 ( module Network.NineP.Effects.Error
@@ -27,11 +33,12 @@ type App n = Eff '[NPMsg, LocalState n, Error NPError, Logger, IOE]
 
 type m ~> n = forall x . m x -> n x
 
-runApp :: (MonadIO m, Monad n) => Bool -> Socket -> FileSystemT n () -> (n ~> IO) -> App n a -> m (Either NPError a)
-runApp l sock fs hoist = liftIO . runEff . (if l then runStdLogger else runSilentLogger)
-                                         . runErrorNoCallStack @NPError 
-                                         . runLocalState fs hoist
-                                         . runMsgHandle sock
+runApp :: (MonadIO m, Monad n) => Bool -> [LogLevel] -> Socket -> FileSystemT n () -> (n ~> IO) -> App n a -> m (Either NPError a)
+runApp logP levels sock fs hoist = liftIO . runEff
+                                          . runFilterLogger levels logP
+                                          . runErrorNoCallStack @NPError 
+                                          . runLocalState fs hoist
+                                          . runMsgHandle sock
 
-runAppThrow :: (MonadIO m, MonadFail m, Monad n) => Bool -> Socket -> FileSystemT n () -> (n ~> IO) -> App n a -> m a
-runAppThrow l sock fs hoist app = runApp l sock fs hoist app >>= either (const $ fail "FAILED") return
+runAppThrow :: (MonadIO m, MonadFail m, Monad n) => Bool -> [LogLevel] -> Socket -> FileSystemT n () -> (n ~> IO) -> App n a -> m a
+runAppThrow logP levels sock fs hoist app = runApp logP levels sock fs hoist app >>= either (const $ fail "FAILED") return

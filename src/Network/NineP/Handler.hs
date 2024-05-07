@@ -1,5 +1,12 @@
 {-# LANGUAGE OverloadedLabels, PatternSynonyms, ViewPatterns, RankNTypes, TypeApplications, ScopedTypeVariables #-}
 
+{-|
+Module      : Network.NineP.Handler
+Maintainer  : james@hobson.space
+Copyright   : (c) James Hobson, 2024
+Portability : POSIX
+-}
+
 module Network.NineP.Handler where
 
 import Data.NineP
@@ -29,6 +36,7 @@ handleTyp TTopen    tag body = handleTOpen    tag body
 handleTyp TTcreate  tag body = handleTCreate  tag body
 handleTyp TTread    tag body = handleTRead    tag body
 handleTyp TTwrite   tag body = handleTWrite   tag body
+handleTyp TTclunk   tag body = handleTClunk   tag body
 handleTyp _ tag _ = throwError $ Proto tag "Can't handle this kind of message"
 {-# INLINE handleTyp #-}
 
@@ -124,6 +132,12 @@ handleTWrite tag (Twrite fid (fromIntegral -> offset) dat) = do
     _                    -> throwError $ Proto tag "Writing not allowed"
   sendMsg $ Msg TRwrite tag $ Rwrite $ fromIntegral $ B.length dat
 handleTWrite tag _ = throwError $ Proto tag "Malformed Request"
+
+handleTClunk :: forall n . Word16 -> VarMsg -> App n ()
+handleTClunk tag (Tclunk fid) = do
+  forgetFid @n fid
+  sendMsg $ Msg TRclunk tag Rclunk
+handleTClunk tag _ = throwError $ Proto tag "Malformed Request"
 
 
 lookupName :: FileTree n a -> String -> Maybe (FileTree n a)

@@ -14,8 +14,9 @@ fs = dir "/" $ do
 
 conf :: FSServerConf
 conf = FSServerConf
-  { bindAddr = "unix!/tmp/example.sock"
-  , debugLogs = True
+  { bindAddr  = "unix!/tmp/example.sock"
+  , logProt   = True
+  , logLevels = []
   }
 
 main :: IO ()

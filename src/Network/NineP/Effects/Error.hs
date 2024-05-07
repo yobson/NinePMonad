@@ -4,6 +4,14 @@ module Network.NineP.Effects.Error
 , NPError(..)
 ) where
 
+{-|
+Module      : Network.NineP.Effects.Error
+Description : Error stype
+Maintainer  : james@hobson.space
+Copyright   : (c) James Hobson, 2024
+Portability : POSIX
+-}
+
 import Data.Word
 import Effectful.Error.Static
 

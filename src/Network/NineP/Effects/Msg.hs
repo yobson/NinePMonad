@@ -8,6 +8,14 @@
            , TypeApplications
            , TemplateHaskell #-}
 
+{-|
+Module      : Network.NineP.Effects.Msg
+Description : Effect for handling 9p messages over sockets
+Maintainer  : james@hobson.space
+Copyright   : (c) James Hobson, 2024
+Portability : POSIX
+-}
+
 
 module Network.NineP.Effects.Msg 
 ( NPMsg
