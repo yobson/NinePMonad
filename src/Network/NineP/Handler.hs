@@ -80,8 +80,7 @@ handleTWalk tag (Twalk fid newFid path) = do
     walk :: FileTree n Qid -> [String] -> App n (FileTree n Qid, [Qid])
     walk ft [] = do
       logMsg Info "End of walk"
-      qid <- getQid ft
-      return (ft, [qid])
+      return (ft, [])
     walk ft (x:xs) = do
       logMsg Info "walking"
       case lookupName ft x of

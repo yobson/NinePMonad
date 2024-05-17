@@ -7,7 +7,9 @@ import Network.NineP.Server
 import Control.Monad.IO.Class
 
 fs :: FileSystem ()
-fs = dir "/" $ return ()
+fs = dir "/" $ do
+  file "foo"
+  file "bar"
 
 conf :: FSServerConf
 conf = FSServerConf
