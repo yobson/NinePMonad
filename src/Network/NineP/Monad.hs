@@ -1,7 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, FunctionalDependencies, DataKinds, GADTs,
              FlexibleContexts, TypeFamilies, AllowAmbiguousTypes, UndecidableInstances,
              FlexibleInstances, ScopedTypeVariables, PolyKinds, RankNTypes, OverloadedLabels, 
-             RecordWildCards, ViewPatterns 
+             RecordWildCards, ViewPatterns, TemplateHaskell
 #-}
 
 {-|
@@ -61,7 +61,9 @@ import Numeric
 import Data.Word
 import GHC.OverloadedLabels (IsLabel(..))
 import Control.Monad.State.Strict
-import Control.Monad.Cont
+import Lens.Micro hiding (set)
+import Lens.Micro.Mtl
+import Lens.Micro.TH
 import qualified Data.ByteString.Lazy as B
 import qualified Data.Map as Map
 
@@ -86,6 +88,7 @@ data Directory = Directory
   , dirGroup       :: String
   , dirPermissions :: Word16
   , dirQidPath     :: Word64
+  , dirQidParent   :: Word64
   }
 
 instance Show Directory where
@@ -118,8 +121,18 @@ getNodeF :: FileTreeF m a -> Either Directory (File m)
 getNodeF (Leaf f)     = Right f
 getNodeF (Branch d _) = Left d
 
+type TreeMap m = Map.Map Word64 (FileTreeF m Word64)
+
+data BuildState m = BuildState
+  { _bsQidCounter    :: Word64
+  , _bsCurrentParent :: Word64
+  , _bsLevelQids     :: [Word64]
+  , _bsMap           :: TreeMap m
+  }
+makeLenses 'BuildState
+
 -- | File system monad type
-newtype FileSystemT m a = FileSystemT { unFileSystem :: ContT Word64 (StateT [FileTree m] m) a }
+newtype FileSystemT m a = FileSystemT { unFileSystem :: StateT (BuildState m) m a }
   deriving (Monad, Functor, Applicative)
 
 rec :: (Functor f) => (f a -> a) -> Fix f -> a
@@ -128,19 +141,10 @@ rec f (Fix x) = f $ fmap (rec f) x
 corec :: (Functor f) => (a -> f a) -> a -> Fix f
 corec f i = Fix $ corec f <$> f i
 
-type TreeMap m = Map.Map Word64 (FileTreeF m Word64)
-
-annotate :: [FileTree m] -> TreeMap m
-annotate []  = Map.empty
-annotate [x] = snd $ rec go x
-  where go :: FileTreeF m (Word64, TreeMap m) -> (Word64, TreeMap m)
-        go (Branch d fs) = (dirQidPath d, Map.unions $ Map.singleton (dirQidPath d) (Branch d $ map fst fs) : map snd fs)
-        go (Leaf f)      = (fileQidPath f, Map.singleton (fileQidPath f) (Leaf f))
-annotate _   = error "File system with multiple roots!"
 
 -- | Convert the filesystem monad into a rosetree
 runFileSystemT :: (Monad m) => FileSystemT m () -> m (Map.Map Word64 (FileTreeF m Word64))
-runFileSystemT (FileSystemT xm) = annotate <$> execStateT (runContT xm $ \() -> return 0) []
+runFileSystemT (FileSystemT xm) = undefined -- annotate <$> execStateT (runContT xm $ \() -> return 0) []
 
 type FileSystem = FileSystemT IO
 
@@ -201,7 +205,7 @@ setProp = set
 modifyProp :: (IsLabel l (SetterProxy l), Getter (FileTreeF m a) l b, Setter (FileTreeF m a) l b) => SetterProxy l -> FileTreeF m a -> (b -> b) -> FileTreeF m a
 modifyProp l ft f = setProp l ft $ f $ getProp l ft
 
-instance (Monad m) => MonadState [FileTree m] (FileSystemT m) where
+instance (Monad m) => MonadState (BuildState m) (FileSystemT m) where
   get = FileSystemT get
   put new = FileSystemT $ put new
 
@@ -215,6 +219,7 @@ emptyDir = Directory
   , dirOwner       = "root"
   , dirGroup       = "root"
   , dirQidPath     = 0
+  , dirQidParent   = 0
   }
 
 emptyFile :: (Monad m) => File m
@@ -283,24 +288,28 @@ instance {-# OVERLAPPING #-} Ends e a => Ends e (b -> a)
 instance {-# OVERLAPPABLE #-} e ~ a => Ends e (FileSystemT m a)
 
 mkDir :: (Monad m) => [Attribute Directory] -> FileSystemT m a -> FileSystemT m a
-mkDir attrs (FileSystemT (ContT ck)) = FileSystemT $ ContT $ \k -> do
-  save <- get
-  let nextQidPath = if null save 
-                       then 0
-                       else 1 + case head save of
-                                  (unfix -> Leaf f) -> fileQidPath f
-                                  (unfix -> Branch d _) -> dirQidPath d
-  put []
-  v <- ck
-  st <- get
-  put save
-  let node = applyAttrs emptyDir{dirQidPath = nextQidPath} attrs
-  modify (Fix (Branch node st) : )
+mkDir attrs children = do
+  myQid <- use bsQidCounter
+  myParent <- use bsCurrentParent
+  levelsQids <- use bsLevelQids
+  let node = applyAttrs emptyDir{dirQidParent = myParent, dirQidPath = myQid} attrs
+  bsCurrentParent .= myQid
+  bsQidCounter %= (+1)
+  bsLevelQids .= []
+  v <- children
+  childQids <- use bsLevelQids
+  bsCurrentParent .= myParent
+  bsLevelQids .= myQid : levelsQids
+  bsMap %= Map.insert myQid (Branch node childQids)
   return v
 
 mkFile :: Monad m => [Attribute (File m)] -> FileSystemT m ()
-mkFile attrs = modify ((Fix $ Leaf $ applyAttrs emptyFile attrs) :)
-{-# INLINE mkFile #-}
+mkFile attrs = do
+  myQid <- use bsQidCounter
+  bsQidCounter %= (+1)
+  bsLevelQids %= (myQid :)
+  let node = applyAttrs emptyFile{fileQidPath = myQid} attrs
+  bsMap %= Map.insert myQid (Leaf node)
 
 -- | A directory node in the file system
 dir :: (INodeDir arg res) => String -> arg -> res

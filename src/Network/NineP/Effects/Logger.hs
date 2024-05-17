@@ -26,10 +26,10 @@ module Network.NineP.Effects.Logger
 , runFilterLogger
 ) where
 
-import Effectful
-import Effectful.Dispatch.Dynamic
-import Effectful.TH
+import Control.Monad.Freer
+import Control.Monad.Freer.TH
 import Control.Monad
+import Control.Monad.IO.Class
 import qualified Data.NineP as N
 
 -- | Indication of how to feel when reading a log message
@@ -38,29 +38,28 @@ data LogLevel = Info    -- ^ Happy
               | Fatal   -- ^ Upset
               deriving (Eq, Show)
 
-data Logger :: Effect where
-  LogMsg :: LogLevel -> String -> Logger m ()
-  LogProto :: N.Msg -> Logger m ()
-
-type instance DispatchOf Logger = 'Dynamic
+data Logger r where
+  LogMsg :: LogLevel -> String -> Logger ()
+  LogProto :: N.Msg -> Logger ()
 
 makeEffect ''Logger
 
-runStdLogger :: (IOE :> es) => Eff (Logger : es) a -> Eff es a
-runStdLogger = interpret $ \_ -> \case
-  LogMsg l msg -> printLog l msg
-  LogProto msg -> liftIO $ print msg
+runStdLogger :: forall m es a . (MonadIO m, LastMember m es) => Eff (Logger : es) a -> Eff es a
+runStdLogger = interpretM go
+  where go :: Logger x -> m x
+        go (LogMsg l msg) = printLog l msg
+        go (LogProto msg) = liftIO $ print msg
 
 
 runSilentLogger :: Eff (Logger : es) a -> Eff es a
-runSilentLogger = interpret $ \_ -> \case
+runSilentLogger = interpret $ \case
   LogMsg _ _ -> return ()
   LogProto _ -> return ()
 
-runFilterLogger :: (IOE :> es) => [LogLevel] -> Bool -> Eff (Logger : es) a -> Eff es a
-runFilterLogger levels proto = interpret $ \_ -> \case
+runFilterLogger :: (MonadIO m, LastMember m es) => [LogLevel] -> Bool -> Eff (Logger : es) a -> Eff es a
+runFilterLogger levels proto = interpretM $ \case
   LogMsg level msg -> when (level `elem` levels) $ printLog level msg
-  LogProto msg -> when proto $ liftIO $ print msg
+  LogProto     msg -> when proto                 $ liftIO $ print msg
 
 
 printLog :: (MonadIO m) => LogLevel -> String -> m ()

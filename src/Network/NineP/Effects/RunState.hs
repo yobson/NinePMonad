@@ -38,9 +38,8 @@ module Network.NineP.Effects.RunState
 ) where
 
 
-import Effectful
-import Effectful.Dispatch.Dynamic
-import Effectful.State.Static.Local
+import Control.Monad.Freer
+import Control.Monad.Freer.TH
 import Data.Word
 import Data.NineP
 import qualified Data.Map as Map
@@ -55,54 +54,56 @@ import Network.NineP.Monad
 import Lens.Micro.TH
 import Lens.Micro.Effectful
 
-data LocalState n :: Effect where
-  SetName :: String -> LocalState n m ()
-  GetRoot ::  LocalState n m (FileTree n Qid)
-  InsertFid :: Word32 -> FileTree n Qid -> LocalState n m ()
-  GetQid :: FileTree n Qid -> LocalState n m Qid
-  GetFid    :: Word32 -> LocalState n m (FileTree n Qid)
-  GetName  :: LocalState n m String
-  OpenFile :: Word32 -> File n -> Word8 -> LocalState n m ()
-  ForgetFid :: Word32 -> LocalState n m ()
-  GetOpenFile :: Word32 -> Word8 -> LocalState n m (File n)
-  GetStats    :: Word32 -> LocalState n m [Stat]
-  ExecFOP :: n a -> LocalState n m a
+type Tree m = FileTreeF m Word64
 
-type instance DispatchOf (LocalState n) = 'Dynamic
+data LocalState r where
+  SetName :: String -> LocalState ()
+  GetRoot ::  LocalState (Tree m)
+  InsertFid :: Word32 -> Tree m -> LocalState ()
+  GetQid :: Tree m -> LocalState Qid
+  GetFid    :: Word32 -> LocalState (Tree m)
+  GetName  :: LocalState String
+  OpenFile :: Word32 -> File m -> Word8 -> LocalState ()
+  ForgetFid :: Word32 -> LocalState ()
+  GetOpenFile :: Word32 -> Word8 -> LocalState (File n)
+  GetStats    :: Word32 -> LocalState [Stat]
+  ExecFOP :: m a -> LocalState a
 
-setName :: forall n es . (LocalState n :> es) => String -> Eff es ()
-setName s = send $ SetName @n s
+makeEffect ''LocalState
 
-
-getRoot :: (LocalState n :> es) => Eff es (FileTree n Qid)
-getRoot = send GetRoot
-
-insertFid :: (LocalState n :> es) => Word32 -> FileTree n Qid -> Eff es ()
-insertFid fid f = send $ InsertFid fid f
-
-getQid :: (LocalState n :> es) => FileTree n Qid -> Eff es Qid
-getQid = send . GetQid
-
-getFid :: (LocalState n :> es) => Word32 -> Eff es (FileTree n Qid)
-getFid = send . GetFid
-
-forgetFid :: forall n es . (LocalState n :> es) => Word32 -> Eff es ()
-forgetFid fid = send $ ForgetFid @n fid
-
-getName :: forall n es . (LocalState n :> es) => Eff es String
-getName = send $ GetName @n
-
-openFile :: (LocalState n :> es) => Word32 -> File n -> Word8 -> Eff es ()
-openFile fid f mode = send $ OpenFile fid f mode
-
-getOpenFile :: (LocalState n :> es) => Word32 -> Word8 -> Eff es (File n)
-getOpenFile fid mode = send $ GetOpenFile fid mode
-
-getStats :: forall n es . (LocalState n :> es) => Word32 -> Eff es [Stat]
-getStats = send . GetStats @n
-
-execFOP :: (LocalState n :> es) => n a -> Eff es a
-execFOP = send . ExecFOP
+-- setName :: forall n es . (LocalState n :> es) => String -> Eff es ()
+-- setName s = send $ SetName @n s
+-- 
+-- 
+-- getRoot :: (LocalState n :> es) => Eff es (FileTree n Qid)
+-- getRoot = send GetRoot
+-- 
+-- insertFid :: (LocalState n :> es) => Word32 -> FileTree n Qid -> Eff es ()
+-- insertFid fid f = send $ InsertFid fid f
+-- 
+-- getQid :: (LocalState n :> es) => FileTree n Qid -> Eff es Qid
+-- getQid = send . GetQid
+-- 
+-- getFid :: (LocalState n :> es) => Word32 -> Eff es (FileTree n Qid)
+-- getFid = send . GetFid
+-- 
+-- forgetFid :: forall n es . (LocalState n :> es) => Word32 -> Eff es ()
+-- forgetFid fid = send $ ForgetFid @n fid
+-- 
+-- getName :: forall n es . (LocalState n :> es) => Eff es String
+-- getName = send $ GetName @n
+-- 
+-- openFile :: (LocalState n :> es) => Word32 -> File n -> Word8 -> Eff es ()
+-- openFile fid f mode = send $ OpenFile fid f mode
+-- 
+-- getOpenFile :: (LocalState n :> es) => Word32 -> Word8 -> Eff es (File n)
+-- getOpenFile fid mode = send $ GetOpenFile fid mode
+-- 
+-- getStats :: forall n es . (LocalState n :> es) => Word32 -> Eff es [Stat]
+-- getStats = send . GetStats @n
+-- 
+-- execFOP :: (LocalState n :> es) => n a -> Eff es a
+-- execFOP = send . ExecFOP
 
 data RunState n = RunState
   { _uname :: String
@@ -110,7 +111,7 @@ data RunState n = RunState
   , _openFiles :: Map.Map Word32 (File n, Word8)
   , _qidCount  :: Word64
   , _localFS :: FileSystemT n ()
-  , _localFT :: Maybe (FileTree n Qid)
+  , _localFT :: Maybe (Tree n)
   }
 
 makeLenses ''RunState

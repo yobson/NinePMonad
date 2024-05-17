@@ -33,8 +33,7 @@ library
     build-depends:    base ^>=4.16.4.0,
                       NineP,
                       mtl,
-                      effectful-core,
-                      effectful-th,
+                      freer-simple,
                       stm,
                       network-run,
                       network,
@@ -45,6 +44,7 @@ library
                       bytestring,
                       containers,
                       microlens,
+                      microlens-mtl,
                       microlens-effectful,
                       microlens-th
     hs-source-dirs:   src
