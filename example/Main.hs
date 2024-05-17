@@ -6,11 +6,8 @@ import Network.NineP.Monad
 import Network.NineP.Server
 import Control.Monad.IO.Class
 
-fs :: (MonadIO m) => FileSystemT m ()
-fs = dir "/" $ do
-  file "hello" [#owner := "jameshobson"]
-    (Reader $ return "Hello, World!")
-    (Writer $ \_ -> return ())
+fs :: FileSystem ()
+fs = dir "/" $ return ()
 
 conf :: FSServerConf
 conf = FSServerConf
