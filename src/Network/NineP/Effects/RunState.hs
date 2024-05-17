@@ -33,6 +33,7 @@ module Network.NineP.Effects.RunState
 , getName
 , openFile
 , getOpenFile
+, getStats
 , execFOP
 ) where
 
@@ -64,6 +65,7 @@ data LocalState n :: Effect where
   OpenFile :: Word32 -> File n -> Word8 -> LocalState n m ()
   ForgetFid :: Word32 -> LocalState n m ()
   GetOpenFile :: Word32 -> Word8 -> LocalState n m (File n)
+  GetStats    :: Word32 -> LocalState n m [Stat]
   ExecFOP :: n a -> LocalState n m a
 
 type instance DispatchOf (LocalState n) = 'Dynamic
@@ -95,6 +97,9 @@ openFile fid f mode = send $ OpenFile fid f mode
 
 getOpenFile :: (LocalState n :> es) => Word32 -> Word8 -> Eff es (File n)
 getOpenFile fid mode = send $ GetOpenFile fid mode
+
+getStats :: forall n es . (LocalState n :> es) => Word32 -> Eff es [Stat]
+getStats = send . GetStats @n
 
 execFOP :: (LocalState n :> es) => n a -> Eff es a
 execFOP = send . ExecFOP
@@ -231,6 +236,7 @@ runLocalState fs hoist = reinterpret (evalState $ initialState @m fs) $ \_ -> \c
   OpenFile fid f mode -> do
     -- TODO: Move perms check here
     openFiles %= Map.insert fid (f, mode)
+  GetStats fid -> undefined
   GetOpenFile fid _ -> do
     -- TODO: Perms check
     m <- use openFiles

@@ -37,6 +37,7 @@ handleTyp TTcreate  tag body = handleTCreate  tag body
 handleTyp TTread    tag body = handleTRead    tag body
 handleTyp TTwrite   tag body = handleTWrite   tag body
 handleTyp TTclunk   tag body = handleTClunk   tag body
+handleTyp TTstat    tag body = handleTStat    tag body
 handleTyp _ tag _ = throwError $ Proto tag "Can't handle this kind of message"
 {-# INLINE handleTyp #-}
 
@@ -137,6 +138,12 @@ handleTClunk tag (Tclunk fid) = do
   forgetFid @n fid
   sendMsg $ Msg TRclunk tag Rclunk
 handleTClunk tag _ = throwError $ Proto tag "Malformed Request"
+
+handleTStat :: Word16 -> VarMsg -> App n ()
+handleTStat tag (Tstat fid) = do
+  stats <- getStats fid
+  sendMsg $ Msg TRstat stats
+handleTStat tag _ = throwError $ Proto tag "Malformed Request"
 
 
 lookupName :: FileTree n a -> String -> Maybe (FileTree n a)
