@@ -39,12 +39,12 @@ module Network.NineP.Effects.RunState
 
 
 import Control.Monad.Freer
-import Control.Monad.Freer.TH
 import Control.Monad.Freer.State
 import Control.Monad.IO.Class
 import Data.Word
 import Data.NineP
 import qualified Data.Map as Map
+import Data.Map ((!))
 
 import Network.NineP.Effects.Error
 import Network.NineP.Effects.Logger
@@ -54,7 +54,8 @@ import Network.NineP.Monad
 import Lens.Micro.TH
 import Lens.Micro.Freer
 
-type Tree m = FileTreeF m Word64
+type Tree m = FileTree m
+type TreeF m = FileTreeF m Word64
 
 data LocalState m r where
   SetName :: String -> LocalState m ()
@@ -105,28 +106,17 @@ getStats = send . GetStats @n
 execFOP :: (Member (LocalState n) es) => n a -> Eff es a
 execFOP = send . ExecFOP
 
-data RunState n = RunState
-  { _uname :: String
-  , _fidMap :: Map.Map Word32 Qid
-  , _openFiles :: Map.Map Word32 (File n, Word8)
-  , _qidCount  :: Word64
-  , _localFS :: FileSystemT n ()
-  , _localFT :: Maybe (Tree n)
-  }
+rec :: (Functor f) => (f a -> a) -> Fix f -> a
+rec f (Fix x) = f $ fmap (rec f) x
 
-makeLenses ''RunState
+corec :: (Functor f) => (a -> f a) -> a -> Fix f
+corec f i = Fix $ corec f <$> f i
 
-initialState :: FileSystemT n () -> RunState n
-initialState fs = RunState
-  { _uname = ""
-  , _fidMap = Map.empty
-  , _openFiles = Map.empty
-  , _qidCount  = 0
-  , _localFS = fs
-  , _localFT = Nothing
-  }
+buildTree :: Map.Map Word64 (FileTreeF m Word64) -> FileTree m
+buildTree = buildTreeFrom 0
 
-type m ~> n = forall x . m x -> n x
+buildTreeFrom :: Word64 -> Map.Map Word64 (FileTreeF m Word64) -> FileTree m
+buildTreeFrom st ft = corec (ft !) st
 
 adapt :: (MonadIO m, LastMember m es, Member (Error NPError) es) => IO a -> Eff es a
 adapt m = liftIO (try m) >>= \case
@@ -184,7 +174,7 @@ adapt m = liftIO (try m) >>= \case
 --   logMsg Info $ concat ["Setting dir ", dirName d, " to have ", show (Qid 0x80 0 c)]
 --   return $ Branch (Qid 0x80 0 c) d children
 
-theQid :: Tree m -> Qid
+theQid :: TreeF m -> Qid
 theQid (Branch q _) = Qid 0x80 0 $ dirQidPath q
 theQid (Leaf q) = Qid 0 0 $ fileQidPath q
 
@@ -204,50 +194,45 @@ theQid (Leaf q) = Qid 0 0 $ fileQidPath q
 --     _   -> throwError $ NPError "Qid invarient not met"
 
 
+data RunState n = RunState
+  { _uname :: String
+  , _fidMap :: Map.Map Word32 Qid
+  , _openFiles :: Map.Map Word32 (File n, Word8)
+  , _qidCount  :: Word64
+  , _localFS :: FileSystemT n ()
+  , _localFT :: Maybe (Tree n)
+  }
+
+makeLenses ''RunState
+
+initialState :: FileSystemT n () -> RunState n
+initialState fs = RunState
+  { _uname = ""
+  , _fidMap = Map.empty
+  , _openFiles = Map.empty
+  , _qidCount  = 0
+  , _localFS = fs
+  , _localFT = Nothing
+  }
+
+
 runLocalState :: forall m es a 
-              .  (MonadIO m, LastMember m (State (RunState m) : es), Members [Error NPError, State (RunState m), Logger] es) 
+              .  (MonadIO m, LastMember m es, Members [Error NPError, Logger] es) 
               => FileSystemT m () -> Eff (LocalState m : es) a -> Eff es a
 runLocalState fs = evalState (initialState fs) . reinterpret go
   where
-    go :: LocalState m x -> Eff (State (RunState m) : es) x
+    go :: (MonadIO m, LastMember m (State (RunState m) : es)) => LocalState m x -> Eff (State (RunState m) : es) x
     go (SetName name) = assign @(RunState m) uname name
-    go GetRoot = do
-      lfs <- use @(RunState m) localFS
-      lft <- undefined -- annotateFS hoist lfs
-      localFT ?= lft
-      return lft
+    go GetRoot = undefined
     go (InsertFid fid ft) = do
-      let q = theQid ft
-      logMsg Info $ "FidMap[" <> show fid <> "] = " <> show q
-      modifying @(RunState m) fidMap (Map.insert fid q)
+      logMsg Info "Hello, World"
+      adapt $ putStrLn "Word"
 
-    go (GetQid ft) = return $ theQid ft
-    go (GetFid fid) = do
-      logMsg Info "Get Fid"
-      fm <- use @(RunState m) fidMap
-      case Map.lookup fid fm of
-        Nothing -> throwError $ NPError "No fid in db" -- TODO: Catch this
-        Just qid  -> do
-          lfs <- use @(RunState m) localFS
-          logMsg Info "Updating local tree"
-          undefined -- updateLocalFS hoist lfs
-          logMsg Info $ "Looking for file of Qid: " <> show qid
-          ft <- undefined -- lookupQid qid
-          logMsg Info "Found it!"
-          return ft
-    go (ForgetFid fid) = do
-      logMsg Info $ "fidMap[" <> show fid <> "] = _"
-      modifying @(RunState m) fidMap (Map.delete fid)
-    go GetName = use @(RunState m) uname
-    go (OpenFile fid f mode) = do
-      -- TODO: Move perms check here
-      openFiles %= Map.insert fid (f, mode)
+    go (GetQid ft) = undefined
+    go (GetFid fid) = undefined
+    go (ForgetFid fid) = undefined
+    go GetName = undefined
+    go (OpenFile fid f mode) = undefined
     go (GetStats fid) = undefined
-    go (GetOpenFile fid _) = do
-      -- TODO: Perms check
-      m <- use @(RunState m) openFiles
-      case Map.lookup fid m of
-        Nothing -> throwError $ NPError "File Not Open" -- TODO: Catch this
-        Just (f,_) -> return f -- TODO: Perms Check
-
-    go (ExecFOP fop) = sendM @m fop
+    go (GetOpenFile fid _) = undefined
+    go (ExecFOP fop) = sendM fop

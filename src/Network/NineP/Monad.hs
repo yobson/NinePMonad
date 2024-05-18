@@ -53,8 +53,6 @@ module Network.NineP.Monad
 , getProp
 , setProp
 , modifyProp
-, rec
-, corec
 ) where
 
 import Numeric
@@ -135,13 +133,6 @@ makeLenses 'BuildState
 newtype FileSystemT m a = FileSystemT { unFileSystem :: StateT (BuildState m) m a }
   deriving (Monad, Functor, Applicative)
 
-rec :: (Functor f) => (f a -> a) -> Fix f -> a
-rec f (Fix x) = f $ fmap (rec f) x
-
-corec :: (Functor f) => (a -> f a) -> a -> Fix f
-corec f i = Fix $ corec f <$> f i
-
-
 -- | Convert the filesystem monad into a rosetree
 runFileSystemT :: (Monad m) => FileSystemT m () -> m (Map.Map Word64 (FileTreeF m Word64))
 runFileSystemT (FileSystemT xm) = undefined -- annotate <$> execStateT (runContT xm $ \() -> return 0) []
@@ -194,15 +185,15 @@ instance Getter (FileTree m) "owner" String where grab l = either (grab l) (grab
 instance Getter (FileTree m) "group" String where grab l = either (grab l) (grab l) . getNode
 
 -- | Get a property from the root of a file tree
-getProp :: (IsLabel l (SetterProxy l), Getter (FileTreeF m a) l b) => SetterProxy l -> FileTreeF m a -> b
+getProp :: (IsLabel l (SetterProxy l), Getter (FileTree m) l b) => SetterProxy l -> FileTree m -> b
 getProp = grab 
 
 -- | Set a property from the root of a file tree
-setProp :: (IsLabel l (SetterProxy l), Setter (FileTreeF m a) l b) => SetterProxy l -> FileTreeF m a -> b -> FileTreeF m a
+setProp :: (IsLabel l (SetterProxy l), Setter (FileTree m) l b) => SetterProxy l -> FileTree m -> b -> FileTree m
 setProp = set
 
 -- | Modify a property from the root of a file tree
-modifyProp :: (IsLabel l (SetterProxy l), Getter (FileTreeF m a) l b, Setter (FileTreeF m a) l b) => SetterProxy l -> FileTreeF m a -> (b -> b) -> FileTreeF m a
+modifyProp :: (IsLabel l (SetterProxy l), Getter (FileTree m) l b, Setter (FileTree m) l b) => SetterProxy l -> FileTree m -> (b -> b) -> FileTree m
 modifyProp l ft f = setProp l ft $ f $ getProp l ft
 
 instance (Monad m) => MonadState (BuildState m) (FileSystemT m) where

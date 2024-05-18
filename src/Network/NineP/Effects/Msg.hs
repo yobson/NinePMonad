@@ -25,6 +25,7 @@ module Network.NineP.Effects.Msg
 , runMsgHandle
 ) where
 
+import Data.Kind
 import Control.Monad.Freer
 import Control.Monad.Freer.TH
 import Control.Monad.Freer.State
@@ -49,7 +50,7 @@ data NPMsg r where
 
 makeEffect ''NPMsg
 
-adapt :: (MonadIO m, LastMember m es, Members [Error NPError, State LocalState] es) => IO a -> Eff es a
+adapt :: (MonadIO m, LastMember m es, Members [Error NPError, State (LocalState m)] es) => IO a -> Eff es a
 adapt m = liftIO (try m) >>= \case
   Left (e::IOException) -> throwError . NPError $ show e
   Right v               -> return v
@@ -60,29 +61,31 @@ feedIncremental decoder@(Partial _) feeder = do
   feedIncremental (pushChunks decoder input) feeder
 feedIncremental decoder _ = return decoder
 
-data LocalState = LState
+data LocalState (m :: Type -> Type) = LState
   { leftOver :: BL.ByteString
   , msgSize  :: Int64
   }
 
-initialState :: LocalState
+initialState :: LocalState m
 initialState = LState BL.empty 4096
 
 runMsgHandle 
-  :: forall m es a . (MonadIO m, LastMember m (State LocalState : es), Members [Error NPError, State LocalState, Logger] es) => Socket -> Eff (NPMsg : es) a -> Eff es a
+  :: forall m es a 
+  .  (MonadIO m, LastMember m es, Members [Error NPError, Logger] es) 
+  => Socket -> Eff (NPMsg : es) a -> Eff es a
 runMsgHandle sock = evalState initialState . reinterpret go
   where 
-    go :: LastMember m (State LocalState : es) => NPMsg x -> Eff (State LocalState : es) x
+    go :: (LastMember m (State (LocalState m) : es)) => NPMsg x -> Eff (State (LocalState m) : es) x
     go RecvMsg = do
-      residual <- gets leftOver
-      size     <- gets msgSize
+      residual <- gets @(LocalState m) leftOver
+      size     <- gets @(LocalState m) msgSize
       let decoder = runGetIncremental (N.get @N.Msg) `pushChunks` residual
-      result <- adapt @m $ feedIncremental decoder (recv sock size)
+      result <- adapt $ feedIncremental decoder (recv sock size)
       case result of --TODO: Better Errors
         Fail {}      -> throwError $ NPError "msg decode error"
         Partial _    -> throwError $ NPError "Impossible state"
-        Done res _ x -> modify (\s -> s{leftOver = BL.fromStrict res}) >> logProto x >> return x
+        Done res _ x -> modify @(LocalState m) (\s -> s{leftOver = BL.fromStrict res}) >> logProto x >> return x
     go (SendMsg msg) = do
       logProto msg
-      adapt @m $ sendAll sock $ runPut (N.put msg)
-    go (SetMsgSize w) = modify $ \s -> s{msgSize = fromIntegral w}
+      adapt $ sendAll sock $ runPut (N.put msg)
+    go (SetMsgSize w) = modify @(LocalState m) $ \s -> s{msgSize = fromIntegral w}
