@@ -35,6 +35,8 @@ module Network.NineP.Effects.RunState
 , getOpenFile
 , getStats
 , execFOP
+, rec
+, corec
 ) where
 
 
@@ -66,7 +68,7 @@ data LocalState m r where
   GetName  :: LocalState m String
   OpenFile :: Word32 -> File m -> Word8 -> LocalState m ()
   ForgetFid :: Word32 -> LocalState m ()
-  GetOpenFile :: Word32 -> Word8 -> LocalState m (File n)
+  GetOpenFile :: Word32 -> Word8 -> LocalState m (File m)
   GetStats    :: Word32 -> LocalState m [Stat]
   ExecFOP :: m a -> LocalState m a
 
@@ -117,11 +119,6 @@ buildTree = buildTreeFrom 0
 
 buildTreeFrom :: Word64 -> Map.Map Word64 (FileTreeF m Word64) -> FileTree m
 buildTreeFrom st ft = corec (ft !) st
-
-adapt :: (MonadIO m, LastMember m es, Member (Error NPError) es) => IO a -> Eff es a
-adapt m = liftIO (try m) >>= \case
-  Left (e::IOException) -> throwError . NPError $ show e
-  Right v               -> return v
 
 -- annotateFS :: (MonadIO m, LastMember m es, Members [Error NPError, State (RunState m), Logger] es) => FileSystemT m () -> Eff es (FileTree m Qid)
 -- annotateFS hoist fs = undefined -- do
@@ -174,9 +171,12 @@ adapt m = liftIO (try m) >>= \case
 --   logMsg Info $ concat ["Setting dir ", dirName d, " to have ", show (Qid 0x80 0 c)]
 --   return $ Branch (Qid 0x80 0 c) d children
 
-theQid :: TreeF m -> Qid
-theQid (Branch q _) = Qid 0x80 0 $ dirQidPath q
-theQid (Leaf q) = Qid 0 0 $ fileQidPath q
+theQid :: Tree m -> Qid
+theQid (unfix -> Branch q _) = Qid 0x80 0 $ dirQidPath q
+theQid (unfix -> Leaf q) = Qid 0 0 $ fileQidPath q
+
+qidPath :: Tree m -> Word64
+qidPath = qid_path . theQid
 
 --ft2list :: Tree m -> [Tree m]
 --ft2list l@(Leaf _)      = [l]
@@ -196,43 +196,59 @@ theQid (Leaf q) = Qid 0 0 $ fileQidPath q
 
 data RunState n = RunState
   { _uname :: String
-  , _fidMap :: Map.Map Word32 Qid
+  , _fidMap :: Map.Map Word32 Word64
   , _openFiles :: Map.Map Word32 (File n, Word8)
-  , _qidCount  :: Word64
-  , _localFS :: FileSystemT n ()
-  , _localFT :: Maybe (Tree n)
   }
 
 makeLenses ''RunState
 
-initialState :: FileSystemT n () -> RunState n
-initialState fs = RunState
+initialState :: RunState n
+initialState = RunState
   { _uname = ""
   , _fidMap = Map.empty
   , _openFiles = Map.empty
-  , _qidCount  = 0
-  , _localFS = fs
-  , _localFT = Nothing
   }
 
 
 runLocalState :: forall m es a 
               .  (MonadIO m, LastMember m es, Members [Error NPError, Logger] es) 
               => FileSystemT m () -> Eff (LocalState m : es) a -> Eff es a
-runLocalState fs = evalState (initialState fs) . reinterpret go
+runLocalState fs = evalState initialState . reinterpret go
   where
     go :: (MonadIO m, LastMember m (State (RunState m) : es)) => LocalState m x -> Eff (State (RunState m) : es) x
     go (SetName name) = assign @(RunState m) uname name
-    go GetRoot = undefined
-    go (InsertFid fid ft) = do
-      logMsg Info "Hello, World"
-      adapt $ putStrLn "Word"
 
-    go (GetQid ft) = undefined
-    go (GetFid fid) = undefined
-    go (ForgetFid fid) = undefined
-    go GetName = undefined
-    go (OpenFile fid f mode) = undefined
+    go GetRoot = do
+      ftF <- sendM $ runFileSystemT fs
+      return $ buildTree ftF
+
+    go (InsertFid fid ft) = modifying @(RunState m) fidMap $ Map.insert fid (qidPath ft)
+
+    go (GetQid ft) = return $ theQid ft
+
+    go (GetFid fid) = do
+      ftF <- sendM $ runFileSystemT fs
+      fm <- use @(RunState m) fidMap
+      case Map.lookup fid fm of
+        Just qid -> return $ buildTreeFrom qid ftF
+        Nothing -> do
+          logMsg Warning $ "Did not find fid: " <> show fid <> " in fidMap"
+          throwError $ NPError "Did not find fid in fid map"
+
+    go (ForgetFid fid) = modifying @(RunState m) fidMap $ Map.delete fid
+
+    go GetName = use @(RunState m) uname
+
+    go (OpenFile fid f mode) = openFiles %= Map.insert fid (f,mode)
+
     go (GetStats fid) = undefined
-    go (GetOpenFile fid _) = undefined
+
+    go (GetOpenFile fid _) = do
+      fm <- use openFiles
+      case Map.lookup fid fm of
+        Just fi -> return $ fst fi
+        Nothing -> do
+          logMsg Warning "Open file requested that was not opened"
+          throwError $ NPError "File not open"
+
     go (ExecFOP fop) = sendM fop

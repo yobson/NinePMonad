@@ -50,6 +50,7 @@ module Network.NineP.Monad
 , Fix(..)
 , FileTreeF(..)
 , FileTree
+, BuildState(..)
 , getProp
 , setProp
 , modifyProp
@@ -59,7 +60,6 @@ import Numeric
 import Data.Word
 import GHC.OverloadedLabels (IsLabel(..))
 import Control.Monad.State.Strict
-import Lens.Micro hiding (set)
 import Lens.Micro.Mtl
 import Lens.Micro.TH
 import qualified Data.ByteString.Lazy as B
@@ -134,8 +134,8 @@ newtype FileSystemT m a = FileSystemT { unFileSystem :: StateT (BuildState m) m 
   deriving (Monad, Functor, Applicative)
 
 -- | Convert the filesystem monad into a rosetree
-runFileSystemT :: (Monad m) => FileSystemT m () -> m (Map.Map Word64 (FileTreeF m Word64))
-runFileSystemT (FileSystemT xm) = undefined -- annotate <$> execStateT (runContT xm $ \() -> return 0) []
+runFileSystemT :: (Monad m) => FileSystemT m () -> m (TreeMap m)
+runFileSystemT (FileSystemT xm) = _bsMap <$> execStateT xm (BuildState 0 0 [] Map.empty)
 
 type FileSystem = FileSystemT IO
 
