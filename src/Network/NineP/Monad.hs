@@ -1,7 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, FunctionalDependencies, DataKinds, GADTs,
              FlexibleContexts, TypeFamilies, AllowAmbiguousTypes, UndecidableInstances,
              FlexibleInstances, ScopedTypeVariables, PolyKinds, RankNTypes, OverloadedLabels, 
-             RecordWildCards 
+             RecordWildCards, ViewPatterns, TemplateHaskell
 #-}
 
 {-|
@@ -47,7 +47,10 @@ module Network.NineP.Monad
 , Attribute(..)
 , File(..)
 , Directory(..)
-, FileTree(..)
+, Fix(..)
+, FileTreeF(..)
+, FileTree
+, BuildState(..)
 , getProp
 , setProp
 , modifyProp
@@ -57,7 +60,10 @@ import Numeric
 import Data.Word
 import GHC.OverloadedLabels (IsLabel(..))
 import Control.Monad.State.Strict
+import Lens.Micro.Mtl
+import Lens.Micro.TH
 import qualified Data.ByteString.Lazy as B
+import qualified Data.Map as Map
 
 -- | Base type for files
 data File m = File
@@ -67,6 +73,7 @@ data File m = File
   , fileGroup       :: String
   , fileRead        :: Maybe (Reader m)
   , fileWrite       :: Maybe (Writer m)
+  , fileQidPath     :: Word64
   }
 
 instance Show (File m) where
@@ -78,6 +85,8 @@ data Directory = Directory
   , dirOwner       :: String
   , dirGroup       :: String
   , dirPermissions :: Word16
+  , dirQidPath     :: Word64
+  , dirQidParent   :: Word64
   }
 
 instance Show Directory where
@@ -89,22 +98,44 @@ newtype Reader m = Reader (m B.ByteString)
 -- | Simple writer on lazy bytestrings
 newtype Writer m = Writer (B.ByteString -> m ())
 
--- | A file system represented as a rose tree. 
-data FileTree m a = Branch a Directory [FileTree m a]
-                  | Leaf   a (File m)
-                  deriving Show
+-- | F algebraic Tree
+data FileTreeF m t = Branch Directory [t]
+                   | Leaf   (File m)
 
-getNode :: FileTree m a -> Either Directory (File m)
-getNode (Leaf _ f)     = Right f
-getNode (Branch _ d _) = Left d
+instance Functor (FileTreeF m) where
+  fmap f (Branch d fs) = Branch d $ map f fs
+  fmap _ (Leaf   f)    = Leaf f
+
+newtype Fix f = Fix { unfix :: f (Fix f) }
+
+-- | A file system represented as a rose tree. 
+type FileTree m = Fix (FileTreeF m)
+
+getNode :: FileTree m -> Either Directory (File m)
+getNode (unfix -> Leaf f)     = Right f
+getNode (unfix -> Branch d _) = Left d
+
+getNodeF :: FileTreeF m a -> Either Directory (File m)
+getNodeF (Leaf f)     = Right f
+getNodeF (Branch d _) = Left d
+
+type TreeMap m = Map.Map Word64 (FileTreeF m Word64)
+
+data BuildState m = BuildState
+  { _bsQidCounter    :: Word64
+  , _bsCurrentParent :: Word64
+  , _bsLevelQids     :: [Word64]
+  , _bsMap           :: TreeMap m
+  }
+makeLenses 'BuildState
 
 -- | File system monad type
-newtype FileSystemT m a = FileSystemT { unFileSystem :: StateT [FileTree m ()] m a }
-  deriving (Monad, Functor, Applicative, MonadFix)
+newtype FileSystemT m a = FileSystemT { unFileSystem :: StateT (BuildState m) m a }
+  deriving (Monad, Functor, Applicative)
 
 -- | Convert the filesystem monad into a rosetree
-runFileSystemT :: (Monad m) => FileSystemT m a -> m (a, [FileTree m ()])
-runFileSystemT fs = runStateT (unFileSystem fs) []
+runFileSystemT :: (Monad m) => FileSystemT m () -> m (TreeMap m)
+runFileSystemT (FileSystemT xm) = _bsMap <$> execStateT xm (BuildState 0 0 [] Map.empty)
 
 type FileSystem = FileSystemT IO
 
@@ -144,26 +175,30 @@ instance Getter Directory "perms" Word16 where grab _ = dirPermissions
 instance Getter Directory "owner" String where grab _ = dirOwner
 instance Getter Directory "group" String where grab _ = dirGroup
 
-instance Getter (FileTree m a) "name"  String where grab l = either (grab l) (grab l) . getNode
-instance Getter (FileTree m a) "perms" Word16 where grab l = either (grab l) (grab l) . getNode
-instance Getter (FileTree m a) "owner" String where grab l = either (grab l) (grab l) . getNode
-instance Getter (FileTree m a) "group" String where grab l = either (grab l) (grab l) . getNode
+instance Getter (FileTreeF m a) "name"  String where grab l = either (grab l) (grab l) . getNodeF
+instance Getter (FileTreeF m a) "perms" Word16 where grab l = either (grab l) (grab l) . getNodeF
+instance Getter (FileTreeF m a) "owner" String where grab l = either (grab l) (grab l) . getNodeF
+instance Getter (FileTreeF m a) "group" String where grab l = either (grab l) (grab l) . getNodeF
+instance Getter (FileTree m) "name"  String where grab l = either (grab l) (grab l) . getNode
+instance Getter (FileTree m) "perms" Word16 where grab l = either (grab l) (grab l) . getNode
+instance Getter (FileTree m) "owner" String where grab l = either (grab l) (grab l) . getNode
+instance Getter (FileTree m) "group" String where grab l = either (grab l) (grab l) . getNode
 
 -- | Get a property from the root of a file tree
-getProp :: (IsLabel l (SetterProxy l), Getter (FileTree m a) l b) => SetterProxy l -> FileTree m a -> b
+getProp :: (IsLabel l (SetterProxy l), Getter (FileTree m) l b) => SetterProxy l -> FileTree m -> b
 getProp = grab 
 
 -- | Set a property from the root of a file tree
-setProp :: (IsLabel l (SetterProxy l), Setter (FileTree m a) l b) => SetterProxy l -> FileTree m a -> b -> FileTree m a
+setProp :: (IsLabel l (SetterProxy l), Setter (FileTree m) l b) => SetterProxy l -> FileTree m -> b -> FileTree m
 setProp = set
 
 -- | Modify a property from the root of a file tree
-modifyProp :: (IsLabel l (SetterProxy l), Getter (FileTree m a) l b, Setter (FileTree m a) l b) => SetterProxy l -> FileTree m a -> (b -> b) -> FileTree m a
+modifyProp :: (IsLabel l (SetterProxy l), Getter (FileTree m) l b, Setter (FileTree m) l b) => SetterProxy l -> FileTree m -> (b -> b) -> FileTree m
 modifyProp l ft f = setProp l ft $ f $ getProp l ft
 
-instance (Monad m) => MonadState [FileTree m ()] (FileSystemT m) where
+instance (Monad m) => MonadState (BuildState m) (FileSystemT m) where
   get = FileSystemT get
-  put new = FileSystemT $ StateT $ \_ -> pure ((), new)
+  put new = FileSystemT $ put new
 
 instance (MonadIO m) => MonadIO (FileSystemT m) where
   liftIO xm = FileSystemT $ liftIO xm
@@ -174,6 +209,8 @@ emptyDir = Directory
   , dirPermissions = 0o777
   , dirOwner       = "root"
   , dirGroup       = "root"
+  , dirQidPath     = 0
+  , dirQidParent   = 0
   }
 
 emptyFile :: (Monad m) => File m
@@ -184,6 +221,7 @@ emptyFile = File
   , fileGroup       = "root"
   , fileRead        = Nothing
   , fileWrite       = Nothing
+  , fileQidPath     = 0
   }
 
 -- | This is for setting properties on files and directories using @-XOverloadedLabels@
@@ -242,18 +280,27 @@ instance {-# OVERLAPPABLE #-} e ~ a => Ends e (FileSystemT m a)
 
 mkDir :: (Monad m) => [Attribute Directory] -> FileSystemT m a -> FileSystemT m a
 mkDir attrs children = do
-  save <- get
-  put []
+  myQid <- use bsQidCounter
+  myParent <- use bsCurrentParent
+  levelsQids <- use bsLevelQids
+  let node = applyAttrs emptyDir{dirQidParent = myParent, dirQidPath = myQid} attrs
+  bsCurrentParent .= myQid
+  bsQidCounter %= (+1)
+  bsLevelQids .= []
   v <- children
-  st <- get
-  put save
-  let node = applyAttrs emptyDir attrs
-  modify (Branch () node st : )
+  childQids <- use bsLevelQids
+  bsCurrentParent .= myParent
+  bsLevelQids .= myQid : levelsQids
+  bsMap %= Map.insert myQid (Branch node childQids)
   return v
 
 mkFile :: Monad m => [Attribute (File m)] -> FileSystemT m ()
-mkFile attrs = modify ((Leaf () $ applyAttrs emptyFile attrs) :)
-{-# INLINE mkFile #-}
+mkFile attrs = do
+  myQid <- use bsQidCounter
+  bsQidCounter %= (+1)
+  bsLevelQids %= (myQid :)
+  let node = applyAttrs emptyFile{fileQidPath = myQid} attrs
+  bsMap %= Map.insert myQid (Leaf node)
 
 -- | A directory node in the file system
 dir :: (INodeDir arg res) => String -> arg -> res

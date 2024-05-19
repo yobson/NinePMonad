@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards, TypeApplications #-}
+{-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards, TypeApplications, FlexibleContexts #-}
 
 {-|
 Module      : Network.NineP.Server
@@ -18,7 +18,6 @@ module Network.NineP.Server
 )
 where
 
-import Effectful
 import Data.Word
 
 import Control.Monad.Fix
@@ -29,6 +28,7 @@ import Data.String
 import Network.Run.TCP
 import Network.Socket
 import Control.Monad
+import Control.Monad.IO.Class
 import qualified Control.Exception as E
 import Control.Concurrent (forkFinally)
 
@@ -72,13 +72,16 @@ instance Show BindAddr where
 serveFileSystem :: MonadIO m => FSServerConf -> FileSystem () -> m ()
 serveFileSystem conf = hoistFileSystemServer conf id
 
+tryError :: Member (Error e) es => Eff es a -> Eff es (Either e a)
+tryError xm = (Right <$> xm) `catchError` (return . Left)
+
 -- | Host file server defined on arbitary monad by providing a natural transformation
-hoistFileSystemServer :: (MonadIO n, MonadIO m) => FSServerConf -> (forall x . n x -> IO x) -> FileSystemT n () -> m ()
-hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> runAppThrow logProt logLevels sock fs hoist $ fix $ \loop -> do
+hoistFileSystemServer :: (MonadIO n, MonadIO m, MonadFail n) => FSServerConf -> (forall x . n x -> IO x) -> FileSystemT n () -> m ()
+hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> hoist $ runAppThrow logProt logLevels sock fs $ fix $ \loop -> do
   msg <- recvMsg
   res <- tryError @NPError $ handleRequest msg
   case res of
-    Left (_,e) -> logMsg Fatal $ "Thread closed due to error: " <> show e
+    Left e -> logMsg Fatal $ "Thread closed due to error: " <> show e
     Right _    -> loop
 
 runUnixServer :: FilePath -> (Socket -> IO a) -> IO a

@@ -18,9 +18,17 @@ import Data.Bits
 
 import qualified Data.ByteString.Lazy as B
 
-handleErr :: CallStack -> NPError -> App n ()
-handleErr _ (Proto tag e) = sendMsg $ Msg TRerror tag $ Rerror e
-handleErr _ e         = throwError e
+pattern FLeaf :: File m -> FileTree m
+pattern FLeaf f = Fix (Leaf f)
+
+pattern FBranch :: Directory -> [FileTree m] -> FileTree m
+pattern FBranch d ch = Fix (Branch d ch)
+
+{-# COMPLETE FBranch, FLeaf #-}
+
+handleErr :: NPError -> App n ()
+handleErr (Proto tag e) = sendMsg $ Msg TRerror tag $ Rerror e
+handleErr e         = throwError e
 
 handleRequest :: Msg -> App n ()
 handleRequest (Msg typ tag body) = handleTyp typ tag body `catchError` handleErr
@@ -37,6 +45,7 @@ handleTyp TTcreate  tag body = handleTCreate  tag body
 handleTyp TTread    tag body = handleTRead    tag body
 handleTyp TTwrite   tag body = handleTWrite   tag body
 handleTyp TTclunk   tag body = handleTClunk   tag body
+handleTyp TTstat    tag body = handleTStat    tag body
 handleTyp _ tag _ = throwError $ Proto tag "Can't handle this kind of message"
 {-# INLINE handleTyp #-}
 
@@ -56,8 +65,8 @@ handleTAttach tag (Tattach fid _ uname _) = do
   setName @n uname
   root <- getRoot @n
   case root of
-    Leaf _ _ -> throwError $ NPError "Root must be a dir"
-    branch   -> do
+    FLeaf _ -> throwError $ NPError "Root must be a dir"
+    branch  -> do
       insertFid fid branch
       qid <- getQid branch
       sendMsg $ Msg TRattach tag (Rattach qid)
@@ -67,7 +76,7 @@ handleTAttach tag _ = throwError $ Proto tag "Malformed Request"
 handleTFlush :: Word16 -> VarMsg -> App n ()
 handleTFlush = undefined
 
-handleTWalk :: Word16 -> VarMsg -> App n ()
+handleTWalk :: Word16 -> VarMsg -> App m ()
 handleTWalk tag (Twalk fid newFid path) = do
   logMsg Info "Walk MSG"
   dir <- getFid fid
@@ -77,7 +86,7 @@ handleTWalk tag (Twalk fid newFid path) = do
   sendMsg $ Msg TRwalk tag $ Rwalk qids
 
   where
-    walk :: FileTree n Qid -> [String] -> App n (FileTree n Qid, [Qid])
+    walk :: FileTree m -> [String] -> App m (FileTree m, [Qid])
     walk ft [] = do
       logMsg Info "End of walk"
       return (ft, [])
@@ -97,8 +106,8 @@ handleTOpen :: forall n . Word16 -> VarMsg -> App n ()
 handleTOpen tag (Topen fid mode) = do
   file' <- getFid @n fid
   case file' of
-    Branch {}   -> throwError $ Proto tag "Can't open dir"
-    Leaf _ file -> do
+    FBranch {}   -> throwError $ Proto tag "Can't open dir"
+    FLeaf file -> do
       uname <- getName @n
       if checkPerms file' uname mode
          then do
@@ -138,10 +147,16 @@ handleTClunk tag (Tclunk fid) = do
   sendMsg $ Msg TRclunk tag Rclunk
 handleTClunk tag _ = throwError $ Proto tag "Malformed Request"
 
+handleTStat :: forall m . Word16 -> VarMsg -> App m ()
+handleTStat tag (Tstat fid) = do
+  stats <- getStats @m fid
+  sendMsg $ Msg TRstat tag $ Rstat stats
+handleTStat tag _ = throwError $ Proto tag "Malformed Request"
 
-lookupName :: FileTree n a -> String -> Maybe (FileTree n a)
-lookupName (Leaf _ _)        _  = Nothing
-lookupName (Branch _ _ tree) fn = find (\ft -> getProp #name ft == fn) tree
+
+lookupName :: FileTree m -> String -> Maybe (FileTree m)
+lookupName (FLeaf _)        _  = Nothing
+lookupName (FBranch _ tree) fn = find (\ft -> getProp #name ft == fn) tree
 {-# INLINE lookupName #-}
 
 pattern ModeRead, ModeWrite, ModeRW, ModeExec :: Word8
@@ -150,7 +165,7 @@ pattern ModeWrite = 1
 pattern ModeRW    = 2
 pattern ModeExec  = 3
 
-checkPerms :: FileTree n a -> String -> Word8 -> Bool
+checkPerms :: FileTree m -> String -> Word8 -> Bool
 checkPerms ft uname mode = case mode of
                               ModeRead  -> canRead
                               ModeWrite -> canWrite

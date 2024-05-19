@@ -33,8 +33,7 @@ library
     build-depends:    base ^>=4.16.4.0,
                       NineP,
                       mtl,
-                      effectful-core,
-                      effectful-th,
+                      freer-simple,
                       stm,
                       network-run,
                       network,
@@ -45,7 +44,8 @@ library
                       bytestring,
                       containers,
                       microlens,
-                      microlens-effectful,
+                      microlens-mtl,
+                      microlens-freer-simple,
                       microlens-th
     hs-source-dirs:   src
     default-language: Haskell2010
@@ -66,13 +66,13 @@ test-suite NineP-Monad-test
         cabal-detailed-quickcheck,
         NineP2000
 
-library microlens-effectful
+library microlens-freer-simple
     import:           warnings
     hs-source-dirs:   lenses
-    exposed-modules:  Lens.Micro.Effectful
+    exposed-modules:  Lens.Micro.Freer
     build-depends:    base,
                       microlens,
-                      effectful-core
+                      freer-simple
     default-language: Haskell2010
     ghc-options: -fprint-potential-instances
 

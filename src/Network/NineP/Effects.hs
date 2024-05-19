@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds, TypeApplications, RankNTypes, TypeOperators #-}
+{-# LANGUAGE DataKinds, TypeApplications, RankNTypes, TypeOperators, ScopedTypeVariables #-}
 
 {-|
 Module      : Network.NineP.Effects
@@ -12,14 +12,14 @@ module Network.NineP.Effects
 , module Network.NineP.Effects.Msg
 , module Network.NineP.Effects.RunState
 , module Network.NineP.Effects.Logger
-, module Effectful
+, module Control.Monad.Freer
 , App
 , runApp
 , runAppThrow
 ) where
 
-import Effectful
-import Effectful.Dispatch.Dynamic
+import Control.Monad.Freer
+import Control.Monad.IO.Class
 import Network.Socket
 
 
@@ -29,16 +29,14 @@ import Network.NineP.Effects.RunState
 import Network.NineP.Effects.Logger
 import Network.NineP.Monad
 
-type App n = Eff '[NPMsg, LocalState n, Error NPError, Logger, IOE]
+type App m = Eff '[NPMsg, LocalState m, Error NPError, Logger, m]
 
-type m ~> n = forall x . m x -> n x
+runApp :: MonadIO m => Bool -> [LogLevel] -> Socket -> FileSystemT m () -> App m a -> m (Either NPError a)
+runApp logP levels sock fs = runM
+                           . runFilterLogger levels logP
+                           . runError @NPError 
+                           . runLocalState fs
+                           . runMsgHandle sock
 
-runApp :: (MonadIO m, Monad n) => Bool -> [LogLevel] -> Socket -> FileSystemT n () -> (n ~> IO) -> App n a -> m (Either NPError a)
-runApp logP levels sock fs hoist = liftIO . runEff
-                                          . runFilterLogger levels logP
-                                          . runErrorNoCallStack @NPError 
-                                          . runLocalState fs hoist
-                                          . runMsgHandle sock
-
-runAppThrow :: (MonadIO m, MonadFail m, Monad n) => Bool -> [LogLevel] -> Socket -> FileSystemT n () -> (n ~> IO) -> App n a -> m a
-runAppThrow logP levels sock fs hoist app = runApp logP levels sock fs hoist app >>= either (const $ fail "FAILED") return
+runAppThrow :: (MonadIO m, MonadFail m) => Bool -> [LogLevel] -> Socket -> FileSystemT m () -> App m a -> m a
+runAppThrow logP levels sock fs app = runApp logP levels sock fs app >>= either (const $ fail "FAILED") return
