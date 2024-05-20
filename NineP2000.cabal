@@ -1,87 +1,90 @@
-cabal-version:      3.0
-name:               NineP2000
-version:            0.1.0.0
-synopsis:           A monadic 9p file system library
--- description:
-license:            BSD-3-Clause
-license-file:       LICENSE
-author:             James Hobson
-maintainer:         james@hobson.space
--- copyright:
-category:           Network
-build-type:         Simple
-extra-doc-files:    CHANGELOG.md
--- extra-source-files:
+cabal-version:   3.0
+name:            NineP2000
+version:         0.1.0.0
+license:         BSD-3-Clause
+license-file:    LICENSE
+maintainer:      james@hobson.space
+author:          James Hobson
+synopsis:        A monadic 9p file system library
+description:     This is an experimental package attempting to find the most
+                 idiomaticly haskell way to describe 9p file systems.
+homepage:        https://www.hobson.space
+copyright:       (c) 2024 James Hobson
+stability:       experimental
+bug-reports:     https://github.com/yobson/NineP2000/issues
+category:        Network
+build-type:      Simple
+tested-with:     GHC == {9.2.8}
+extra-doc-files: CHANGELOG.md
 
-common warnings
-    ghc-options: -Wall
+source-repository head
+  type:     git
+  location: https://github.com/yobson/NineP2000
 
 library
-    import:           warnings
     exposed-modules:
-      Network.NineP.Monad
-      Network.NineP.Server
-    default-extensions: StrictData
+        Network.NineP.Monad
+        Network.NineP.Server
+
+    hs-source-dirs:     src
     other-modules:
-      Network.NineP.Handler
-      Network.NineP.Effects
-      Network.NineP.Effects.Error
-      Network.NineP.Effects.RunState
-      Network.NineP.Effects.Msg
-      Network.NineP.Effects.Logger
-    -- other-extensions:
-    build-depends:    base ^>=4.16.4.0,
-                      NineP,
-                      mtl,
-                      freer-simple,
-                      stm,
-                      network-run,
-                      network,
-                      attoparsec,
-                      text,
-                      binary,
-                      exceptions,
-                      bytestring,
-                      containers,
-                      microlens,
-                      microlens-mtl,
-                      microlens-freer-simple,
-                      microlens-th
-    hs-source-dirs:   src
+        Network.NineP.Handler
+        Network.NineP.Effects
+        Network.NineP.Effects.Error
+        Network.NineP.Effects.RunState
+        Network.NineP.Effects.Msg
+        Network.NineP.Effects.Logger
+
+    default-language:   Haskell2010
+    default-extensions: StrictData
+    ghc-options:        -Wall -fprint-potential-instances
+    build-depends:
+        base >=4.16.4.0 && <5.0,
+        NineP >=0.0.2 && <0.1,
+        mtl >=2.2.2 && <3.0,
+        freer-simple <1.3,
+        stm >=2.5.0.2 && <2.6,
+        network-run <0.3,
+        network <4.0,
+        attoparsec <0.15,
+        text >1 && <1.3,
+        binary >=0.8.9.0 && <0.9,
+        exceptions >=0.10.4 && <0.11,
+        bytestring >=0.11.4.0 && <0.12,
+        containers >=0.6.5.1 && <0.7,
+        microlens >= 0.4 && < 0.5,
+        microlens-mtl >= 0.2.0.0 && < 0.3.0.0,
+        microlens-freer-simple -any,
+        microlens-th >= 0.4 && < 0.5
+
+library microlens-freer-simple
+    exposed-modules:  Lens.Micro.Freer
+    hs-source-dirs:   lenses
     default-language: Haskell2010
-    ghc-options: -fprint-potential-instances
+    ghc-options:      -Wall -fprint-potential-instances
+    build-depends:
+        base <5.0,
+        microlens >= 0.4 && < 0.5,
+        freer-simple -any
+
+executable Example
+    main-is:          Main.hs
+    hs-source-dirs:   example
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base >=4.16.4.0 && <5,
+        NineP2000 -any
 
 test-suite NineP-Monad-test
-    import:           warnings
-    default-language: Haskell2010
-    -- other-modules:
-    -- other-extensions:
     type:             detailed-0.9
     test-module:      Tests
     hs-source-dirs:   test
-    build-depends:
-        base ^>=4.16.4.0,
-        Cabal,
-        QuickCheck,
-        cabal-detailed-quickcheck,
-        NineP2000
-
-library microlens-freer-simple
-    import:           warnings
-    hs-source-dirs:   lenses
-    exposed-modules:  Lens.Micro.Freer
-    build-depends:    base,
-                      microlens,
-                      freer-simple
     default-language: Haskell2010
-    ghc-options: -fprint-potential-instances
-
-
-executable Example
-  import: warnings
-  default-language: Haskell2010
-  hs-source-dirs: example
-  main-is: Main.hs
-  build-depends:
-    base,
-    NineP2000
+    ghc-options:      -Wall
+    build-depends:
+        base >=4.16.4.0 && <5,
+        Cabal >=3.6.3.0 && <3.7,
+        QuickCheck -any,
+        cabal-detailed-quickcheck -any,
+        NineP2000 -any
