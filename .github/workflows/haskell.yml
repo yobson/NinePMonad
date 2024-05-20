@@ -16,8 +16,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        ghc-version: ['9.2']
+        os: [ubuntu-latest]
+        ghc-version: ['9.2', '8.10', '9.4']
+
+        include:
+          - os: macos-latest
+            ghc-version: '9.2'
 
     steps:
       - uses: actions/checkout@v4
