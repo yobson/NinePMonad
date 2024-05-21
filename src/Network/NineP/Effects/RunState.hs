@@ -34,7 +34,7 @@ module Network.NineP.Effects.RunState
 , getName
 , openFile
 , getOpenFile
-, getStats
+, getStat
 , execFOP
 , rec
 , corec
@@ -67,10 +67,10 @@ data LocalState m r where
   GetQid :: Tree m -> LocalState m Qid
   GetFid    :: Word32 -> LocalState m (Tree m)
   GetName  :: LocalState m String
-  OpenFile :: Word32 -> File m -> Word8 -> LocalState m ()
+  OpenFile :: Word32 -> Tree m -> Word8 -> LocalState m ()
   ForgetFid :: Word32 -> LocalState m ()
-  GetOpenFile :: Word32 -> Word8 -> LocalState m (File m)
-  GetStats    :: Word32 -> LocalState m [Stat]
+  GetOpenFile :: Word32 -> Word8 -> LocalState m (Tree m)
+  GetStat    :: Tree m -> LocalState m Stat
   ExecFOP :: m a -> LocalState m a
 
 setName :: forall n es . (Member (LocalState n) es) => String -> Eff es ()
@@ -95,14 +95,14 @@ forgetFid fid = send $ ForgetFid @n fid
 getName :: forall n es . (Member (LocalState n) es) => Eff es String
 getName = send $ GetName @n
 
-openFile :: (Member (LocalState n) es) => Word32 -> File n -> Word8 -> Eff es ()
+openFile :: (Member (LocalState n) es) => Word32 -> Tree n -> Word8 -> Eff es ()
 openFile fid f mode = send $ OpenFile fid f mode
 
-getOpenFile :: forall n es . (Member (LocalState n) es) => Word32 -> Word8 -> Eff es (File n)
+getOpenFile :: forall n es . (Member (LocalState n) es) => Word32 -> Word8 -> Eff es (Tree n)
 getOpenFile fid mode = send $ GetOpenFile @n fid mode
 
-getStats :: forall n es . (Member (LocalState n) es) => Word32 -> Eff es [Stat]
-getStats = send . GetStats @n
+getStat :: forall n es . (Member (LocalState n) es) => Tree n -> Eff es Stat
+getStat = send . GetStat @n
 
 execFOP :: (Member (LocalState n) es) => n a -> Eff es a
 execFOP = send . ExecFOP
@@ -115,6 +115,10 @@ corec f i = Fix $ corec f <$> f i
 
 buildTree :: Map.Map Word64 (FileTreeF m Word64) -> FileTree m
 buildTree = buildTreeFrom 0
+
+getNode :: Tree m -> TreeF m
+getNode (unfix -> Leaf f) = Leaf f
+getNode (unfix -> Branch d ch) = Branch d $ map qidPath ch
 
 buildTreeFrom :: Word64 -> Map.Map Word64 (FileTreeF m Word64) -> FileTree m
 buildTreeFrom st ft = corec (ft !) st
@@ -136,11 +140,14 @@ modeF ftF = typS .|. fromIntegral (getPropF #perms ftF)
 qidPath :: Tree m -> Word64
 qidPath = qid_path . theQid
 
+qidPathF :: TreeF m -> Word64
+qidPathF = qid_path . theQidF
+
 
 data RunState n = RunState
   { _uname :: String
   , _fidMap :: Map.Map Word32 Word64
-  , _openFiles :: Map.Map Word32 (File n, Word8)
+  , _openFiles :: Map.Map Word32 (TreeF n, Word8)
   , _fileMap :: Map.Map Word64 (TreeF n)
   }
 
@@ -154,6 +161,20 @@ initialState = RunState
   , _fileMap = Map.empty
   }
 
+mkStat :: TreeF m -> Stat
+mkStat f = Stat
+  { st_typ    = 0
+  , st_dev    = 0
+  , st_qid    = theQidF f
+  , st_mode   = modeF f
+  , st_atime  = 0
+  , st_mtime  = 0
+  , st_length = 0
+  , st_name   = getPropF #name f
+  , st_uid    = getPropF #owner f
+  , st_gid    = getPropF #group f
+  , st_muid   = getPropF #owner f
+  }
 
 runLocalState :: forall m es a 
               .  (MonadIO m, LastMember m es, Members [Error NPError, Logger] es) 
@@ -186,37 +207,23 @@ runLocalState fs eff = do
 
     go GetName = use @(RunState m) uname
 
-    go (OpenFile fid f mode) = openFiles %= Map.insert fid (f,mode)
+    go (OpenFile fid f mode) = openFiles %= Map.insert fid (getNode f,mode)
 
-    go (GetStats fid) = do
-      fm <- use @(RunState m) fidMap
-      case Map.lookup fid fm of
+    go (GetStat ft) = do
+      fm <- use @(RunState m) fileMap
+      case Map.lookup (qidPath ft) fm of
         Nothing -> do
-          logMsg Warning $ "Did not find fid: " <> show fid <> " in fidMap"
-          throwError $ NPError "Did not find dif in fid map"
-        Just qid -> do
-          ftF <- use @(RunState m) fileMap
-          let f = ftF ! qid
-              stat = Stat
-                { st_typ    = 0
-                , st_dev    = 0
-                , st_qid    = theQidF f
-                , st_mode   = modeF f
-                , st_atime  = 0
-                , st_mtime  = 0
-                , st_length = 0
-                , st_name   = getPropF #name f
-                , st_uid    = getPropF #owner f
-                , st_gid    = getPropF #group f
-                , st_muid   = getPropF #owner f
-                }
-          return [stat]
-
+          logMsg Warning $ "Did not find file with qid path: " <> show (qidPath ft)
+          throwError $ NPError "Did not find qid in file map"
+        Just f -> do
+          return $ mkStat f
 
     go (GetOpenFile fid _) = do
-      fm <- use openFiles
+      fm <- use @(RunState m) openFiles
       case Map.lookup fid fm of
-        Just fi -> return $ fst fi
+        Just (treeF,_) -> do
+          ftF <- use fileMap
+          return $ buildTreeFrom (qidPathF treeF) ftF
         Nothing -> do
           logMsg Warning "Open file requested that was not opened"
           throwError $ NPError "File not open"

@@ -15,6 +15,7 @@ import Data.List
 import Network.NineP.Monad hiding (dir, file)
 import Network.NineP.Effects
 import Data.Bits
+import Data.Binary.Put
 
 import qualified Data.ByteString.Lazy as B
 
@@ -106,13 +107,20 @@ handleTOpen :: forall n . Word16 -> VarMsg -> App n ()
 handleTOpen tag (Topen fid mode) = do
   file' <- getFid @n fid
   case file' of
-    FBranch {}   -> throwError $ Proto tag "Can't open dir"
+    FBranch _ _   -> do
+      uname <- getName @n
+      if checkPerms file' uname ModeExec
+         then do
+           qid <- getQid file'
+           openFile fid file' mode
+           sendMsg $ Msg TRopen tag $ Ropen qid 0
+         else throwError $ Proto tag "Does not have permission"
     FLeaf file -> do
       uname <- getName @n
       if checkPerms file' uname mode
          then do
            qid <- getQid file'
-           openFile fid file mode
+           openFile fid file' mode
            sendMsg $ Msg TRopen tag $ Ropen qid 0
          else throwError $ Proto tag "Does not have permission"
          
@@ -124,20 +132,29 @@ handleTCreate tag _ = throwError $ Proto tag "Malformed Request"
 
 handleTRead :: forall n . Word16 -> VarMsg -> App n ()
 handleTRead tag (Tread fid (fromIntegral -> offset) (fromIntegral -> count)) = do
-  f <- getOpenFile @n fid ModeRead
-  let r = fileRead f
-  res <- case r of
-           Just (Reader reader) -> B.take count . B.drop offset <$> execFOP reader
-           _                    -> throwError $ Proto tag "Reading not allowed"
-  sendMsg $ Msg TRread tag $ Rread res
+  ft <- getOpenFile @n fid ModeRead
+  case ft of
+    FBranch _ ch -> do
+      sts <- mapM getStat ch
+      let d = runPut $ mapM_ put sts
+      sendMsg $ Msg TRread tag $ Rread $ B.take count $ B.drop offset d
+      undefined
+    FLeaf f -> do
+      let r = fileRead f
+      res <- case r of
+               Just (Reader reader) -> B.take count . B.drop offset <$> execFOP reader
+               _                    -> throwError $ Proto tag "Reading not allowed"
+      sendMsg $ Msg TRread tag $ Rread res
 handleTRead tag _ = throwError $ Proto tag "Malformed request"
 
 handleTWrite :: forall n . Word16 -> VarMsg -> App n ()
 handleTWrite tag (Twrite fid (fromIntegral -> offset) dat) = do
-  f <- getOpenFile @n fid ModeWrite
-  case fileWrite f of
-    Just (Writer writer) -> execFOP (writer dat)
-    _                    -> throwError $ Proto tag "Writing not allowed"
+  ft <- getOpenFile @n fid ModeWrite
+  case ft of
+    FBranch {} -> undefined
+    FLeaf f -> case fileWrite f of
+      Just (Writer writer) -> execFOP (writer dat)
+      _                    -> throwError $ Proto tag "Writing not allowed"
   sendMsg $ Msg TRwrite tag $ Rwrite $ fromIntegral $ B.length dat
 handleTWrite tag _ = throwError $ Proto tag "Malformed Request"
 
@@ -149,8 +166,9 @@ handleTClunk tag _ = throwError $ Proto tag "Malformed Request"
 
 handleTStat :: forall m . Word16 -> VarMsg -> App m ()
 handleTStat tag (Tstat fid) = do
-  stats <- getStats @m fid
-  sendMsg $ Msg TRstat tag $ Rstat stats
+  f <- getFid fid
+  stat <- getStat @m f
+  sendMsg $ Msg TRstat tag $ Rstat [stat]
 handleTStat tag _ = throwError $ Proto tag "Malformed Request"
 
 
