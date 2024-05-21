@@ -52,6 +52,7 @@ module Network.NineP.Monad
 , FileTree
 , BuildState(..)
 , getProp
+, getPropF
 , setProp
 , modifyProp
 ) where
@@ -187,6 +188,10 @@ instance Getter (FileTree m) "group" String where grab l = either (grab l) (grab
 -- | Get a property from the root of a file tree
 getProp :: (IsLabel l (SetterProxy l), Getter (FileTree m) l b) => SetterProxy l -> FileTree m -> b
 getProp = grab 
+
+-- | Get a property from the root of a file tree
+getPropF :: (IsLabel l (SetterProxy l), Getter (FileTreeF m a) l b) => SetterProxy l -> FileTreeF m a -> b
+getPropF = grab 
 
 -- | Set a property from the root of a file tree
 setProp :: (IsLabel l (SetterProxy l), Setter (FileTree m) l b) => SetterProxy l -> FileTree m -> b -> FileTree m
