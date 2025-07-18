@@ -1,3 +1,7 @@
-packages: *.cabal
 
-allow-newer: freer-simple:template-haskell
+packages: NinePMonad.cabal
+
+source-repository-package
+    type: git
+    location: https://github.com/georgefst/freer-simple.git
+    tag: e1d88c1ee036115ef527bda8c66da997962b3f34

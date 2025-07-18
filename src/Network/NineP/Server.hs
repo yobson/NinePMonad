@@ -1,10 +1,10 @@
-{-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards, TypeApplications, FlexibleContexts #-}
+{-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards, TypeApplications, FlexibleContexts, MonoLocalBinds #-}
 
 {-|
 Module      : Network.NineP.Server
 Description : Running file system servers
 Maintainer  : james@hobson.space
-Copyright   : (c) James Hobson, 2024
+Copyright   : (c) James Hobson, 2025
 Stability   : experimental
 Portability : POSIX
 -}
@@ -33,8 +33,9 @@ import qualified Control.Exception as E
 import Control.Concurrent (forkFinally)
 
 import Network.NineP.Monad
-import Network.NineP.Handler
 import Network.NineP.Effects
+import Network.NineP.Handler (handleRequest)
+import Network.NineP.Effects.ClientState (runClientState)
 
 -- | Server configuration
 data FSServerConf = FSServerConf
@@ -72,17 +73,29 @@ instance Show BindAddr where
 serveFileSystem :: MonadIO m => FSServerConf -> FileSystem () -> m ()
 serveFileSystem conf = hoistFileSystemServer conf id
 
-tryError :: Member (Error e) es => Eff es a -> Eff es (Either e a)
+tryError :: Member (Error NPError) es => Eff es a -> Eff es (Either NPError a)
 tryError xm = (Right <$> xm) `catchError` (return . Left)
 
 -- | Host file server defined on arbitary monad by providing a natural transformation
 hoistFileSystemServer :: (MonadIO n, MonadIO m, MonadFail n) => FSServerConf -> (forall x . n x -> IO x) -> FileSystemT n () -> m ()
-hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> hoist $ runAppThrow logProt logLevels sock fs $ fix $ \loop -> do
-  msg <- recvMsg
-  res <- tryError @NPError $ handleRequest msg
-  case res of
-    Left e -> logMsg Fatal $ "Thread closed due to error: " <> show e
-    Right _    -> loop
+hoistFileSystemServer FSServerConf{..} hoist fs = do
+  globalState <- liftIO $ mkGlobalState fs
+  runServer bindAddr $ \sock -> do
+      err <- runM $ runError @NPError
+                  $ runFilterLogger logLevels logProt
+                  $ runMsgHandle sock
+                  $ runGlobalState globalState hoist
+                  $ runClientState
+                  $ fix $ \loop -> do
+                    r <- tryError recvMsg
+                    case r of
+                      Left _ -> logMsg Warning $ "Failed to read message"
+                      Right msg -> handleRequest msg
+                    loop
+      case err of
+        Left _  -> fail "Something went very wrong"
+        Right a -> return a
+
 
 runUnixServer :: FilePath -> (Socket -> IO a) -> IO a
 runUnixServer fp server = E.bracket openSock close loop

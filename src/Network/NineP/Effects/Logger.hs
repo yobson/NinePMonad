@@ -12,7 +12,7 @@
 Module      : Network.NineP.Effects.Logger
 Description : Effect for logging
 Maintainer  : james@hobson.space
-Copyright   : (c) James Hobson, 2024
+Copyright   : (c) James Hobson, 2025
 Portability : POSIX
 -}
 

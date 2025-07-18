@@ -8,7 +8,7 @@ module Network.NineP.Effects.Error
 Module      : Network.NineP.Effects.Error
 Description : Error type
 Maintainer  : james@hobson.space
-Copyright   : (c) James Hobson, 2024
+Copyright   : (c) James Hobson, 2025
 Portability : POSIX
 -}
 

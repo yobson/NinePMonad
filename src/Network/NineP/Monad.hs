@@ -1,14 +1,14 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, FunctionalDependencies, DataKinds, GADTs,
              FlexibleContexts, TypeFamilies, AllowAmbiguousTypes, UndecidableInstances,
              FlexibleInstances, ScopedTypeVariables, PolyKinds, RankNTypes, OverloadedLabels, 
-             RecordWildCards, ViewPatterns, TemplateHaskell
+             RecordWildCards, ViewPatterns, TemplateHaskell, StrictData
 #-}
 
 {-|
 Module      : Network.NineP.Monad
 Description : Monad for constructing file systems
 Maintainer  : james@hobson.space
-Copyright   : (c) James Hobson, 2024
+Copyright   : (c) James Hobson, 2025
 Stability   : experimental
 Portability : POSIX
 
@@ -38,33 +38,24 @@ Files also recive 'Reader' and 'Writer' objects:
 
 module Network.NineP.Monad
 ( FileSystemT(..)
+, FileSystemFT(..)
 , FileSystem
 , Reader(..)
 , Writer(..)
-, runFileSystemT
 , file
 , dir
 , Attribute(..)
 , File(..)
 , Directory(..)
-, Fix(..)
-, FileTreeF(..)
-, FileTree
-, BuildState(..)
-, getProp
-, getPropF
-, setProp
-, modifyProp
 ) where
 
-import Numeric
 import Data.Word
 import GHC.OverloadedLabels (IsLabel(..))
-import Control.Monad.State.Strict
-import Lens.Micro.Mtl
-import Lens.Micro.TH
+import Control.Monad
 import qualified Data.ByteString.Lazy as B
-import qualified Data.Map as Map
+import Control.Monad.Trans
+import Control.Monad.State
+import Control.Monad.Reader hiding (Reader)
 
 -- | Base type for files
 data File m = File
@@ -74,24 +65,23 @@ data File m = File
   , fileGroup       :: String
   , fileRead        :: Maybe (Reader m)
   , fileWrite       :: Maybe (Writer m)
-  , fileQidPath     :: Word64
+  , fileQIDPath     :: Word64
   }
 
 instance Show (File m) where
-  show File{..} = "<<" <> showOct filePermissions ":" <> fileName <> ">>"
+  show File{..} = "<<" <> show fileQIDPath <> ":" <> fileName <> ">>"
 
 -- | Base type for directories
-data Directory = Directory
+data Directory m = Directory
   { dirName        :: String
   , dirOwner       :: String
   , dirGroup       :: String
   , dirPermissions :: Word16
-  , dirQidPath     :: Word64
-  , dirQidParent   :: Word64
+  , dirQIDPath     :: Word64
   }
 
-instance Show Directory where
-  show Directory{..} = "<<" <> showOct dirPermissions "" <> ":" <> dirName <> ">>"
+instance Show (Directory m) where
+  show Directory{..} = "<<" <> show dirQIDPath <> ":" <> dirName <> ">>"
 
 -- | Simple reader on lazy bytestrings
 newtype Reader m = Reader (m B.ByteString)
@@ -99,44 +89,25 @@ newtype Reader m = Reader (m B.ByteString)
 -- | Simple writer on lazy bytestrings
 newtype Writer m = Writer (B.ByteString -> m ())
 
--- | F algebraic Tree
-data FileTreeF m t = Branch Directory [t]
-                   | Leaf   (File m)
+data FileSystemFT m r = FileNode (File m) r
+                      | DirNode  (Directory m) ~(m (FileSystemT m ())) r
+                      | Embed (m r)
+                      deriving Functor
 
-instance Functor (FileTreeF m) where
-  fmap f (Branch d fs) = Branch d $ map f fs
-  fmap _ (Leaf   f)    = Leaf f
+data FileSystemT m a = Pure a
+                     | Free ~(FileSystemFT m (FileSystemT m a))
 
-newtype Fix f = Fix { unfix :: f (Fix f) }
+instance Functor m => Functor (FileSystemT m) where
+  fmap f (Pure a) = Pure $ f a
+  fmap f (Free r) = Free $ fmap (fmap f) r
 
--- | A file system represented as a rose tree. 
-type FileTree m = Fix (FileTreeF m)
+instance Monad m => Applicative (FileSystemT m) where
+  pure = Pure
+  (<*>) = ap
 
-getNode :: FileTree m -> Either Directory (File m)
-getNode (unfix -> Leaf f)     = Right f
-getNode (unfix -> Branch d _) = Left d
-
-getNodeF :: FileTreeF m a -> Either Directory (File m)
-getNodeF (Leaf f)     = Right f
-getNodeF (Branch d _) = Left d
-
-type TreeMap m = Map.Map Word64 (FileTreeF m Word64)
-
-data BuildState m = BuildState
-  { _bsQidCounter    :: Word64
-  , _bsCurrentParent :: Word64
-  , _bsLevelQids     :: [Word64]
-  , _bsMap           :: TreeMap m
-  }
-makeLenses 'BuildState
-
--- | File system monad type
-newtype FileSystemT m a = FileSystemT { unFileSystem :: StateT (BuildState m) m a }
-  deriving (Monad, Functor, Applicative)
-
--- | Convert the filesystem monad into a rosetree
-runFileSystemT :: (Monad m) => FileSystemT m () -> m (TreeMap m)
-runFileSystemT (FileSystemT xm) = _bsMap <$> execStateT xm (BuildState 0 0 [] Map.empty)
+instance Monad m => Monad (FileSystemT m) where
+  (Pure x) >>= f = f x
+  (Free r) >>= f = Free (fmap (>>= f) r)
 
 type FileSystem = FileSystemT IO
 
@@ -152,81 +123,53 @@ class Getter obj label t | obj label -> t where
 instance l ~ x => IsLabel l (SetterProxy x) where
   fromLabel = SetterProxy
 
-instance Setter (File m) "name"  String     where set _ o v = o {fileName        = v}
-instance Setter (File m) "perms" Word16     where set _ o v = o {filePermissions = v}
-instance Setter (File m) "owner" String     where set _ o v = o {fileOwner       = v}
-instance Setter (File m) "group" String     where set _ o v = o {fileGroup       = v}
-instance Setter (File m) "read"  (Reader m) where set _ o v = o {fileRead        = Just v}
-instance Setter (File m) "write" (Writer m) where set _ o v = o {fileWrite       = Just v}
+instance Setter (File m) "name"    String     where set _ o v = o {fileName        = v}
+instance Setter (File m) "perms"   Word16     where set _ o v = o {filePermissions = v}
+instance Setter (File m) "owner"   String     where set _ o v = o {fileOwner       = v}
+instance Setter (File m) "group"   String     where set _ o v = o {fileGroup       = v}
+instance Setter (File m) "read"    (Reader m) where set _ o v = o {fileRead        = Just v}
+instance Setter (File m) "write"   (Writer m) where set _ o v = o {fileWrite       = Just v}
+instance Setter (File m) "qidPath" Word64     where set _ o v = o {fileQIDPath     = v}
 
-instance Setter Directory "name"  String where set _ o v = o {dirName        = v}
-instance Setter Directory "perms" Word16 where set _ o v = o {dirPermissions = v}
-instance Setter Directory "owner" String where set _ o v = o {dirOwner       = v}
-instance Setter Directory "group" String where set _ o v = o {dirGroup       = v}
+instance Setter (Directory m) "name"    String where set _ o v = o {dirName        = v}
+instance Setter (Directory m) "perms"   Word16 where set _ o v = o {dirPermissions = v}
+instance Setter (Directory m) "owner"   String where set _ o v = o {dirOwner       = v}
+instance Setter (Directory m) "group"   String where set _ o v = o {dirGroup       = v}
+instance Setter (Directory m) "qidPath" Word64 where set _ o v = o {dirQIDPath     = v}
 
-instance Getter (File m) "name"  String     where grab _ = fileName
-instance Getter (File m) "perms" Word16     where grab _ = filePermissions
-instance Getter (File m) "owner" String     where grab _ = fileOwner
-instance Getter (File m) "group" String     where grab _ = fileGroup
+instance Getter (File m) "name"    String     where grab _ = fileName
+instance Getter (File m) "perms"   Word16     where grab _ = filePermissions
+instance Getter (File m) "owner"   String     where grab _ = fileOwner
+instance Getter (File m) "group"   String     where grab _ = fileGroup
+instance Getter (File m) "qidPath" Word64     where grab _ = fileQIDPath
 instance Getter (File m) "read"  (Maybe (Reader m)) where grab _ = fileRead
 instance Getter (File m) "write" (Maybe (Writer m)) where grab _ = fileWrite
 
-instance Getter Directory "name"  String where grab _ = dirName
-instance Getter Directory "perms" Word16 where grab _ = dirPermissions
-instance Getter Directory "owner" String where grab _ = dirOwner
-instance Getter Directory "group" String where grab _ = dirGroup
+instance Getter (Directory m) "name"    String where grab _ = dirName
+instance Getter (Directory m) "perms"   Word16 where grab _ = dirPermissions
+instance Getter (Directory m) "owner"   String where grab _ = dirOwner
+instance Getter (Directory m) "group"   String where grab _ = dirGroup
+instance Getter (Directory m) "qidPath" Word64 where grab _ = dirQIDPath
 
-instance Getter (FileTreeF m a) "name"  String where grab l = either (grab l) (grab l) . getNodeF
-instance Getter (FileTreeF m a) "perms" Word16 where grab l = either (grab l) (grab l) . getNodeF
-instance Getter (FileTreeF m a) "owner" String where grab l = either (grab l) (grab l) . getNodeF
-instance Getter (FileTreeF m a) "group" String where grab l = either (grab l) (grab l) . getNodeF
-instance Getter (FileTree m) "name"  String where grab l = either (grab l) (grab l) . getNode
-instance Getter (FileTree m) "perms" Word16 where grab l = either (grab l) (grab l) . getNode
-instance Getter (FileTree m) "owner" String where grab l = either (grab l) (grab l) . getNode
-instance Getter (FileTree m) "group" String where grab l = either (grab l) (grab l) . getNode
 
--- | Get a property from the root of a file tree
-getProp :: (IsLabel l (SetterProxy l), Getter (FileTree m) l b) => SetterProxy l -> FileTree m -> b
-getProp = grab 
-
--- | Get a property from the root of a file tree
-getPropF :: (IsLabel l (SetterProxy l), Getter (FileTreeF m a) l b) => SetterProxy l -> FileTreeF m a -> b
-getPropF = grab 
-
--- | Set a property from the root of a file tree
-setProp :: (IsLabel l (SetterProxy l), Setter (FileTree m) l b) => SetterProxy l -> FileTree m -> b -> FileTree m
-setProp = set
-
--- | Modify a property from the root of a file tree
-modifyProp :: (IsLabel l (SetterProxy l), Getter (FileTree m) l b, Setter (FileTree m) l b) => SetterProxy l -> FileTree m -> (b -> b) -> FileTree m
-modifyProp l ft f = setProp l ft $ f $ getProp l ft
-
-instance (Monad m) => MonadState (BuildState m) (FileSystemT m) where
-  get = FileSystemT get
-  put new = FileSystemT $ put new
-
-instance (MonadIO m) => MonadIO (FileSystemT m) where
-  liftIO xm = FileSystemT $ liftIO xm
-
-emptyDir :: Directory
+emptyDir :: Monad m => Directory m
 emptyDir = Directory
   { dirName        = ""
   , dirPermissions = 0o777
-  , dirOwner       = "root"
-  , dirGroup       = "root"
-  , dirQidPath     = 0
-  , dirQidParent   = 0
+  , dirOwner       = "nobody"
+  , dirGroup       = "nobody"
+  , dirQIDPath     = 0
   }
 
 emptyFile :: (Monad m) => File m
 emptyFile = File
   { fileName        = ""
   , filePermissions = 0o554
-  , fileOwner       = "root"
-  , fileGroup       = "root"
+  , fileOwner       = "nobody"
+  , fileGroup       = "nobody"
   , fileRead        = Nothing
   , fileWrite       = Nothing
-  , fileQidPath     = 0
+  , fileQIDPath     = 0
   }
 
 -- | This is for setting properties on files and directories using @-XOverloadedLabels@
@@ -248,11 +191,11 @@ applyAttrs = foldl applyAttr
 class INodeDir arg result | result -> arg where
   iNodeDir :: String -> arg -> result
 
-instance (Monad m, f ~ FileSystemT m a) => INodeDir [Attribute Directory] (f -> FileSystemT m a) where
+instance (Monad m, f ~ FileSystemT m ()) => INodeDir [Attribute (Directory m)] (f -> FileSystemT m ()) where
   iNodeDir name attrs = mkDir (#name := name : attrs)
   {-# INLINE iNodeDir #-}
 
-instance (Monad m) => INodeDir (FileSystemT m a) (FileSystemT m a) where
+instance (Monad m) => INodeDir (FileSystemT m ()) (FileSystemT m ()) where
   iNodeDir name = mkDir [#name := name]
   {-# INLINE iNodeDir #-}
 
@@ -283,29 +226,11 @@ class Ends e t
 instance {-# OVERLAPPING #-} Ends e a => Ends e (b -> a)
 instance {-# OVERLAPPABLE #-} e ~ a => Ends e (FileSystemT m a)
 
-mkDir :: (Monad m) => [Attribute Directory] -> FileSystemT m a -> FileSystemT m a
-mkDir attrs children = do
-  myQid <- use bsQidCounter
-  myParent <- use bsCurrentParent
-  levelsQids <- use bsLevelQids
-  let node = applyAttrs emptyDir{dirQidParent = myParent, dirQidPath = myQid} attrs
-  bsCurrentParent .= myQid
-  bsQidCounter %= (+1)
-  bsLevelQids .= []
-  v <- children
-  childQids <- use bsLevelQids
-  bsCurrentParent .= myParent
-  bsLevelQids .= myQid : levelsQids
-  bsMap %= Map.insert myQid (Branch node childQids)
-  return v
+mkDir :: (Monad m) => [Attribute (Directory m)] -> FileSystemT m () -> FileSystemT m ()
+mkDir attrs children = Free $ DirNode (applyAttrs emptyDir attrs) (pure children) $ pure ()
 
 mkFile :: Monad m => [Attribute (File m)] -> FileSystemT m ()
-mkFile attrs = do
-  myQid <- use bsQidCounter
-  bsQidCounter %= (+1)
-  bsLevelQids %= (myQid :)
-  let node = applyAttrs emptyFile{fileQidPath = myQid} attrs
-  bsMap %= Map.insert myQid (Leaf node)
+mkFile attrs = Free $ FileNode (applyAttrs emptyFile attrs) $ pure ()
 
 -- | A directory node in the file system
 dir :: (INodeDir arg res) => String -> arg -> res
@@ -316,3 +241,20 @@ dir = iNodeDir
 file :: (Monad m, INodeFile m (File m) t, Ends () t) => String -> t
 file = iNodeFile []
 {-# INLINE file #-}
+
+
+instance MonadTrans FileSystemT where
+  lift ma = Free (Embed (ma >>= \a -> return $ Pure a))
+
+instance MonadState s m => MonadState s (FileSystemT m) where
+  get = lift get
+  put = lift . put
+  state f = lift (state f)
+
+instance MonadReader r m => MonadReader r (FileSystemT m) where
+  ask = lift ask
+  local f (Pure a) = Pure a
+  local f (Free op) = Free $ case op of
+    FileNode fi r -> FileNode fi (local f r)
+    DirNode dir c r -> DirNode dir (local f c) (local f r)
+    Embed xm  -> Embed (local f xm)
