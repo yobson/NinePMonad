@@ -1,5 +1,5 @@
 {-# LANGUAGE GADTs, ScopedTypeVariables, RankNTypes, TemplateHaskell, TypeOperators, TypeApplications #-}
-{-# LANGUAGE FlexibleContexts, DataKinds, StrictData, RecordWildCards #-}
+{-# LANGUAGE FlexibleContexts, DataKinds, StrictData, RecordWildCards, OverloadedLabels #-}
 {-# OPTIONS -Wno-name-shadowing #-}
 
 {-|
@@ -17,6 +17,7 @@ module Network.NineP.Effects.GlobalState
 , lookupQid
 , fileTree
 , walk
+, children
 , runGlobalState
 , mkGlobalState
 ) where
@@ -45,6 +46,7 @@ data GlobalState r where
   LookupQid   :: [FilePath] -> GlobalState Qid
   FileTree    :: GlobalState (Tree IO)
   Walk        :: [FilePath] -> GlobalState (Either (File IO) (Directory IO))
+  Children    :: [FilePath] -> GlobalState [(Either (File IO) (Directory IO), Qid)]
 
 data GState m = GState 
   { fileSystem :: TMVar (FileSystemT m ())
@@ -59,20 +61,21 @@ mkGlobalState fs = do
   qmap <-  newTMVarIO Map.empty
   return $ GState fsT qidT qmap
 
-findFile :: Member (Error NPError) es => [Tree m] -> String -> Eff es (Tree m)
+findFile :: Members [Error NPError, Logger] es => [Tree m] -> String -> Eff es (Tree m)
 findFile tr n = case find go tr of
-  Just f  -> return f
+  Just f  -> logMsg Info ("Found: " <> n) >> return f
   Nothing -> throwError $ NPError "File not found"
   where go (TFile File{..}) = fileName == n
-        go (TDir Directory{..} _) | n == "/"  = dirName == "/"
-                                  | otherwise = dirName == init n
+        go (TDir Directory{..} _) = dirName == n
 
-walk' :: Member (Error NPError) es => Tree m -> [FilePath] -> Eff es (Tree m)
-walk' f             []     = return f
-walk' (TDir _ kids) (x:xs) = do
+walk' :: Members [Error NPError, Logger] es => Tree m -> [FilePath] -> Eff es (Tree m)
+walk' tree@(TFile File{..}) [file] | fileName == file = return tree
+walk' tree@(TDir Directory{..} _) [file] | dirName == file = return tree
+walk' (TDir _ kids) (_:x:xs) = do
+  logMsg Info $ "Looking for: " <> x
   f <- findFile kids x
-  walk' f xs
-walk' _ _ = throwError $ NPError "File not found"
+  walk' f (x:xs)
+walk' _ _ = throwError $ NPError "File not found!"
 
 mkQid :: Word64 -> Tree m -> Qid
 mkQid path (TDir _ _) = Qid {qid_typ = 0x80, qid_vers = 0, qid_path = path}
@@ -93,13 +96,16 @@ runGlobalState initState runM eff =
         [x] -> return x
         _   -> throwError $ NPError "Tree has multiple roots!"
     go (LookupQid fp) = do
+      logMsg Info $ "Looking up: " <> show fp
       qmapT <- gets @(GState m) qidMap
       qmap <- send $ atomically $ takeTMVar qmapT
       case Map.lookup fp qmap of
         Just qp -> do
+          logMsg Info "Qid Found"
           send $ atomically $ putTMVar qmapT qmap
           return qp
         Nothing -> do
+          logMsg Info "Qid not found!"
           qGenT <- gets @(GState m) nextQID
           root  <- go FileTree
           f     <- walk' root fp
@@ -114,16 +120,38 @@ runGlobalState initState runM eff =
     go (Walk path) = do
       root  <- go FileTree
       w <- walk' root path
-      case w of
-        TFile f  -> return $ Left f
-        TDir d _ -> return $ Right d
+      return $ toEither w
+    go (Children path) = do
+      root  <- go FileTree
+      logMsg Info "Got root"
+      logMsg Info $ "Walking to " <> show path
+      node <- walk' root path
+      logMsg Info $ "Got: " <> show node
+      case node of
+        TFile _     -> throwError $ NPError "File has no children"
+        TDir _ kids -> do
+          let files = map toEither kids
+              names = map (getProp #name) files
+          qids <- mapM (go . LookupQid . (snoc path)) names
+          return $ zip files qids
+
+toEither :: Tree m -> Either (File m) (Directory m)
+toEither (TFile f ) = Left f
+toEither (TDir d _) = Right d
+{-# INLINE toEither #-}
+
+snoc :: [a] -> a -> [a]
+snoc xs x = xs <> [x]
+{-# INLINE snoc #-}
 
   
-evalReader :: (Monad m) => (m ~> IO) -> Reader m -> Reader IO
-evalReader runM (Reader f) = Reader $ runM f
+evalReader :: (Monad m) => (m ~> IO) -> RawReader m -> RawReader IO
+evalReader runM (RawReader f) = RawReader $ \offset count -> runM $ f offset count
+{-# INLINE evalReader #-}
 
-evalWriter :: (Monad m) => (m ~> IO) -> Writer m -> Writer IO
-evalWriter runM (Writer f) = Writer $ \x -> runM (f x)
+evalWriter :: (Monad m) => (m ~> IO) -> RawWriter m -> RawWriter IO
+evalWriter runM (RawWriter f) = RawWriter $ \offset x -> runM (f offset x)
+{-# INLINE evalWriter #-}
 
 evalFile :: (Monad m) => (m ~> IO) -> File m -> File IO
 evalFile runM f = File
@@ -135,6 +163,7 @@ evalFile runM f = File
   , fileWrite = evalWriter runM <$> fileWrite f
   , fileQIDPath = fileQIDPath f
   }
+{-# INLINE evalFile #-}
 
 evalDir :: (Monad m) => (m ~> IO) -> Directory m -> Directory IO
 evalDir _ d = Directory
@@ -144,6 +173,7 @@ evalDir _ d = Directory
   , dirGroup = dirGroup d
   , dirQIDPath = dirQIDPath d
   }
+{-# INLINE evalDir #-}
 
 treeAlgebra :: Monad m => FileSystemFT m (m [Tree m]) -> m [Tree m]
 treeAlgebra (FileNode f r) = do

@@ -40,8 +40,10 @@ module Network.NineP.Monad
 ( FileSystemT(..)
 , FileSystemFT(..)
 , FileSystem
-, Reader(..)
-, Writer(..)
+, RawReader(..)
+, RawWriter(..)
+, StringReader(..)
+, StringWriter(..)
 , file
 , dir
 , getProp
@@ -54,6 +56,7 @@ import Data.Word
 import GHC.OverloadedLabels (IsLabel(..))
 import Control.Monad
 import qualified Data.ByteString.Lazy as B
+import qualified Data.ByteString.Lazy.Char8 as BC
 import Control.Monad.Trans
 import Control.Monad.State
 import Control.Monad.Reader hiding (Reader)
@@ -64,8 +67,8 @@ data File m = File
   , filePermissions :: Word16
   , fileOwner       :: String
   , fileGroup       :: String
-  , fileRead        :: Maybe (Reader m)
-  , fileWrite       :: Maybe (Writer m)
+  , fileRead        :: Maybe (RawReader m)
+  , fileWrite       :: Maybe (RawWriter m)
   , fileQIDPath     :: Word64
   }
 
@@ -84,11 +87,28 @@ data Directory m = Directory
 instance Show (Directory m) where
   show Directory{..} = "<<" <> show dirQIDPath <> ":" <> dirName <> ">>"
 
--- | Simple reader on lazy bytestrings
-newtype Reader m = Reader (m B.ByteString)
+-- | Raw reader on lazy bytestrings
+newtype RawReader m = RawReader (Word64 -> Word32 -> m B.ByteString)
 
--- | Simple writer on lazy bytestrings
-newtype Writer m = Writer (B.ByteString -> m ())
+-- | Raw writer on lazy bytestrings
+newtype RawWriter m = RawWriter (Word64 -> B.ByteString -> m ())
+
+-- | Raw reader on lazy bytestrings
+newtype StringReader m = StringR (m String)
+
+-- | Raw writer on lazy bytestrings
+newtype StringWriter m = StringW (String -> m ())
+
+string2RawReader :: Monad m => StringReader m -> RawReader m
+string2RawReader (StringR f) = RawReader $ \offset count -> do
+  if offset == 0 
+    then do
+      cont <- f
+      return $ B.take (fromIntegral count) $ B.drop (fromIntegral offset) $ BC.pack cont
+    else return B.empty
+
+string2RawWriter :: Monad m => StringWriter m -> RawWriter m
+string2RawWriter (StringW f) = RawWriter $ \_ -> f . BC.unpack
 
 data FileSystemFT m r = FileNode (File m) r
                       | DirNode  (Directory m) ~(m (FileSystemT m ())) r
@@ -124,13 +144,13 @@ class Getter obj label t | obj label -> t where
 instance l ~ x => IsLabel l (SetterProxy x) where
   fromLabel = SetterProxy
 
-instance Setter (File m) "name"    String     where set _ o v = o {fileName        = v}
-instance Setter (File m) "perms"   Word16     where set _ o v = o {filePermissions = v}
-instance Setter (File m) "owner"   String     where set _ o v = o {fileOwner       = v}
-instance Setter (File m) "group"   String     where set _ o v = o {fileGroup       = v}
-instance Setter (File m) "read"    (Reader m) where set _ o v = o {fileRead        = Just v}
-instance Setter (File m) "write"   (Writer m) where set _ o v = o {fileWrite       = Just v}
-instance Setter (File m) "qidPath" Word64     where set _ o v = o {fileQIDPath     = v}
+instance Setter (File m) "name"    String        where set _ o v = o {fileName        = v}
+instance Setter (File m) "perms"   Word16        where set _ o v = o {filePermissions = v}
+instance Setter (File m) "owner"   String        where set _ o v = o {fileOwner       = v}
+instance Setter (File m) "group"   String        where set _ o v = o {fileGroup       = v}
+instance Setter (File m) "read"    (RawReader m) where set _ o v = o {fileRead        = Just v}
+instance Setter (File m) "write"   (RawWriter m) where set _ o v = o {fileWrite       = Just v}
+instance Setter (File m) "qidPath" Word64        where set _ o v = o {fileQIDPath     = v}
 
 instance Setter (Directory m) "name"    String where set _ o v = o {dirName        = v}
 instance Setter (Directory m) "perms"   Word16 where set _ o v = o {dirPermissions = v}
@@ -143,8 +163,8 @@ instance Getter (File m) "perms"   Word16     where grab _ = filePermissions
 instance Getter (File m) "owner"   String     where grab _ = fileOwner
 instance Getter (File m) "group"   String     where grab _ = fileGroup
 instance Getter (File m) "qidPath" Word64     where grab _ = fileQIDPath
-instance Getter (File m) "read"  (Maybe (Reader m)) where grab _ = fileRead
-instance Getter (File m) "write" (Maybe (Writer m)) where grab _ = fileWrite
+instance Getter (File m) "read"  (Maybe (RawReader m)) where grab _ = fileRead
+instance Getter (File m) "write" (Maybe (RawWriter m)) where grab _ = fileWrite
 
 instance Getter (Directory m) "name"    String where grab _ = dirName
 instance Getter (Directory m) "perms"   Word16 where grab _ = dirPermissions
@@ -225,12 +245,20 @@ instance (Monad m, INodeFile m ty t, ty ~ File m) => INodeFile m ty (String -> t
   iNodeFile xs name = iNodeFile $ (#name := name) : xs
   {-# INLINE iNodeFile #-}
 
-instance (Monad m, INodeFile m ty t, ty ~ File m) => INodeFile m ty (Reader m -> t) where
+instance (Monad m, INodeFile m ty t, ty ~ File m) => INodeFile m ty (RawReader m -> t) where
   iNodeFile xs r = iNodeFile $ (#read := r) : xs
   {-# INLINE iNodeFile #-}
 
-instance (Monad m, INodeFile m ty t, ty ~ File m) => INodeFile m ty (Writer m -> t) where
+instance (Monad m, INodeFile m ty t, ty ~ File m) => INodeFile m ty (RawWriter m -> t) where
   iNodeFile xs w = iNodeFile $ (#write := w) : xs
+  {-# INLINE iNodeFile #-}
+
+instance (Monad m, INodeFile m ty t, ty ~ File m) => INodeFile m ty (StringReader m -> t) where
+  iNodeFile xs r = iNodeFile $ (#read := string2RawReader r) : xs
+  {-# INLINE iNodeFile #-}
+
+instance (Monad m, INodeFile m ty t, ty ~ File m) => INodeFile m ty (StringWriter m -> t) where
+  iNodeFile xs w = iNodeFile $ (#write := string2RawWriter w) : xs
   {-# INLINE iNodeFile #-}
 
 class Ends e t

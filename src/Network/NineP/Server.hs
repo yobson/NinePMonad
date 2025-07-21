@@ -12,6 +12,7 @@ Portability : POSIX
 module Network.NineP.Server
 ( serveFileSystem
 , hoistFileSystemServer
+, defaultConf
 , BindAddr(..)
 , FSServerConf(..)
 , LogLevel(..)
@@ -35,13 +36,19 @@ import Control.Concurrent (forkFinally)
 import Network.NineP.Monad
 import Network.NineP.Effects
 import Network.NineP.Handler (handleRequest)
-import Network.NineP.Effects.ClientState (runClientState)
 
 -- | Server configuration
 data FSServerConf = FSServerConf
   { bindAddr  :: BindAddr    -- ^ Has a 'IsString' instance. You can provide a string such as @"tcp!192.168.2.4!8080"@
   , logProt   :: Bool        -- ^ Log protocol messages over standard output
   , logLevels :: [LogLevel]  -- ^ Specify what kind of message to log
+  }
+
+defaultConf :: BindAddr -> FSServerConf
+defaultConf addr = FSServerConf
+  { bindAddr = addr
+  , logProt = False
+  , logLevels = []
   }
 
 data BindAddr = UnixDomain FilePath | Tcp HostName Word16
@@ -71,7 +78,10 @@ instance Show BindAddr where
 
 -- | Host file server defined in terms of 'FileSystem'
 serveFileSystem :: MonadIO m => FSServerConf -> FileSystem () -> m ()
-serveFileSystem conf = hoistFileSystemServer conf id
+serveFileSystem conf = hoistFileSystemServer conf strictID
+
+strictID :: a -> a
+strictID !x = x
 
 tryError :: Member (Error NPError) es => Eff es a -> Eff es (Either NPError a)
 tryError xm = (Right <$> xm) `catchError` (return . Left)
@@ -93,7 +103,8 @@ hoistFileSystemServer FSServerConf{..} hoist fs = do
                       Right msg -> handleRequest msg
                     loop
       case err of
-        Left _  -> fail "Something went very wrong"
+        Left (NPError e)  -> error $ "Something went wrong: " <> e
+        Left _ -> error "Proto error"
         Right a -> return a
 
 

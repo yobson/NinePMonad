@@ -1,16 +1,31 @@
-{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedLabels, OverloadedStrings #-}
 
 module Main where
 
 import Network.NineP.Monad
+import Network.NineP.Server
 import Control.Monad.State
-import Network.NineP.Effects.GlobalState
+import Data.IORef
+
+fRead :: MonadState Int m => m String
+fRead = do
+  num <- get
+  modify (+1)
+  return $ "The count is " <> show num <> "\n"
 
 
-fs :: FileSystem ()
+fs :: FileSystemT (StateT Int IO) ()
 fs = dir "/" $ do
-      file "Alexis"
+      file "count" (StringR fRead)
+
+hoist :: IORef Int -> StateT Int IO x -> IO x
+hoist ref xm = do
+  start <- readIORef ref
+  (out, end) <- runStateT xm start
+  writeIORef ref end
+  return out
 
 main :: IO ()
 main = do
-  putStrLn "Hello, Haskell!"
+  store <- newIORef 0
+  hoistFileSystemServer ((defaultConf "unix!/tmp/fs.sock") {logProt = True}) (hoist store) fs

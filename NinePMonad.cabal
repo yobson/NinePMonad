@@ -28,7 +28,7 @@ library
                       Network.NineP.Effects.GlobalState
                       Network.NineP.Effects.Error
                       Network.NineP.Effects.Logger
-    -- other-extensions:
+    other-extensions: StrictData
     build-depends:    base ^>=4.20.1.0,
                       bytestring,
                       freer-simple >= 1.2.1.2,
@@ -42,7 +42,8 @@ library
                       stm,
                       containers,
                       binary,
-                      filepath
+                      filepath,
+                      time
     hs-source-dirs:   src
     default-language: GHC2021
 
@@ -51,6 +52,7 @@ executable NinePMonad
     main-is:          Main.hs
     -- other-modules:
     -- other-extensions:
+    ghc-options: -threaded
     build-depends:
         base ^>=4.20.1.0,
                       mtl,

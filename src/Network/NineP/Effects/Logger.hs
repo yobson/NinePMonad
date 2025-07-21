@@ -30,6 +30,7 @@ import Control.Monad.Freer
 import Control.Monad.Freer.TH
 import Control.Monad
 import Control.Monad.IO.Class
+import Data.Time
 import qualified Data.NineP as N
 
 -- | Indication of how to feel when reading a log message
@@ -59,8 +60,14 @@ runSilentLogger = interpret $ \case
 runFilterLogger :: (MonadIO m, LastMember m es) => [LogLevel] -> Bool -> Eff (Logger : es) a -> Eff es a
 runFilterLogger levels proto = interpretM $ \case
   LogMsg level msg -> when (level `elem` levels) $ printLog level msg
-  LogProto     msg -> when proto                 $ liftIO $ print msg
+  LogProto     msg -> when proto                 $ do
+    now <- liftIO getCurrentTime
+    liftIO $ putStr $ show now
+    liftIO $ putStr "\t"
+    liftIO $ print msg
 
 
 printLog :: (MonadIO m) => LogLevel -> String -> m ()
-printLog l msg = liftIO $ putStrLn $ concat ["[", show l, "] ", msg]
+printLog l msg = do
+  now <- liftIO getCurrentTime
+  liftIO $ putStrLn $ concat ["[", show now, "|", show l, "] ", msg]
