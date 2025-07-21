@@ -30,12 +30,12 @@ handleTyp TTauth    tag body = handleTAuth    tag body
 handleTyp TTattach  tag body = handleTAttach  tag body
 -- handleTyp TTflush   tag body = handleTFlush   tag body
 handleTyp TTwalk    tag body = handleTWalk    tag body
--- handleTyp TTopen    tag body = handleTOpen    tag body
+handleTyp TTopen    tag body = handleTOpen    tag body
 -- handleTyp TTcreate  tag body = handleTCreate  tag body
 -- handleTyp TTread    tag body = handleTRead    tag body
 -- handleTyp TTwrite   tag body = handleTWrite   tag body
 -- handleTyp TTclunk   tag body = handleTClunk   tag body
--- handleTyp TTstat    tag body = handleTStat    tag body
+handleTyp TTstat    tag body = handleTStat    tag body
 handleTyp _ tag _ = throwError $ Proto tag "Can't handle this kind of message"
 {-# INLINE handleTyp #-}
 
@@ -68,3 +68,17 @@ handleTWalk tag (Twalk fid newFid path) = do
   setFid newFid $ dir <> path
   sendMsg $ Msg TRwalk tag $ Rwalk qids
 handleTWalk tag _ = throwError $ Proto tag "Malformed Request"
+
+handleTOpen :: Members '[NPMsg, Error NPError, ClientState] es => Word16 -> VarMsg -> Eff es ()
+handleTOpen tag (Topen fid mode) = do
+  qid <- openFile fid mode
+  sendMsg $ Msg TRopen tag $ Ropen qid 0
+handleTOpen tag _ = throwError $ Proto tag "Malformed Request"
+{-# INLINE handleTOpen #-}
+
+handleTStat :: Members '[NPMsg, Error NPError, ClientState] es => Word16 -> VarMsg -> Eff es ()
+handleTStat tag (Tstat fid) = do
+  st <- statFid fid
+  sendMsg $ Msg TRstat tag $ Rstat [st]
+handleTStat tag _ = throwError $ Proto tag "Malformed Request"
+{-# INLINE handleTStat #-}

@@ -44,6 +44,7 @@ module Network.NineP.Monad
 , Writer(..)
 , file
 , dir
+, getProp
 , Attribute(..)
 , File(..)
 , Directory(..)
@@ -150,6 +151,16 @@ instance Getter (Directory m) "perms"   Word16 where grab _ = dirPermissions
 instance Getter (Directory m) "owner"   String where grab _ = dirOwner
 instance Getter (Directory m) "group"   String where grab _ = dirGroup
 instance Getter (Directory m) "qidPath" Word64 where grab _ = dirQIDPath
+
+instance Getter (Either (File m) (Directory m)) "name"    String where grab _ = either fileName dirName
+instance Getter (Either (File m) (Directory m)) "perms"   Word16 where grab _ = either filePermissions dirPermissions
+instance Getter (Either (File m) (Directory m)) "owner"   String where grab _ = either fileOwner dirOwner
+instance Getter (Either (File m) (Directory m)) "group"   String where grab _ = either fileGroup dirGroup
+instance Getter (Either (File m) (Directory m)) "qidPath" Word64 where grab _ = either fileQIDPath dirQIDPath
+
+
+getProp :: (IsLabel l (SetterProxy l), Getter obj l b) => SetterProxy l -> obj -> b
+getProp = grab 
 
 
 emptyDir :: Monad m => Directory m

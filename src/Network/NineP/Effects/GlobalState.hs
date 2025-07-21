@@ -44,7 +44,7 @@ data Tree m = TDir  (Directory m) [Tree m]
 data GlobalState r where
   LookupQid   :: [FilePath] -> GlobalState Qid
   FileTree    :: GlobalState (Tree IO)
-  Walk        :: [FilePath] -> GlobalState (Tree IO)
+  Walk        :: [FilePath] -> GlobalState (Either (File IO) (Directory IO))
 
 data GState m = GState 
   { fileSystem :: TMVar (FileSystemT m ())
@@ -113,7 +113,10 @@ runGlobalState initState runM eff =
           return n
     go (Walk path) = do
       root  <- go FileTree
-      walk' root path
+      w <- walk' root path
+      case w of
+        TFile f  -> return $ Left f
+        TDir d _ -> return $ Right d
 
   
 evalReader :: (Monad m) => (m ~> IO) -> Reader m -> Reader IO
