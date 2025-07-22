@@ -25,7 +25,7 @@ hoist ref xm = do
   return out
 
 conf :: FSServerConf
-conf = (defaultConf "/tmp/test")
+conf = (defaultConf "unix!/tmp/fs.sock")
 
 main :: IO ()
 main = do
