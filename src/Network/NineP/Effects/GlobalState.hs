@@ -97,7 +97,7 @@ runGlobalState initState runM eff =
       case tree of
         [x] -> return $ Right x
         _   -> return $ Left "Tree has multiple roots!"
-    go (LookupQid fp) = do
+    go (LookupQid fp) = runError @NPError $ do
       logMsg Info $ "Looking up: " <> show fp
       qmapT <- gets @(GState m) qidMap
       qmap <- send $ atomically $ takeTMVar qmapT
@@ -105,20 +105,22 @@ runGlobalState initState runM eff =
         Just qp -> do
           logMsg Info "Qid Found"
           send $ atomically $ putTMVar qmapT qmap
-          return $ Right $ qp
+          return qp
         Nothing -> do
           logMsg Info "Qid not found!"
           qGenT <- gets @(GState m) nextQID
-          withErr (go FileTree) $ \root ->
-            withErr (runError @NPError $ walk' root fp) $ \f -> do
-              n <- send $ atomically $ do
-                n <- readTVar qGenT
-                modifyTVar qGenT (+1)
-                let qid = mkQid n f
-                putTMVar qmapT $ Map.insert fp qid qmap
-                return qid
-              logMsg Info $ unwords ["Creating new qid:", show fp, "→", show n]
-              return $ Right n
+          root <- adaptErr $ go FileTree
+          f <- catchError @NPError (walk' root fp) $ \e -> do
+            send $ atomically $ putTMVar qmapT qmap
+            throwError e
+          n <- send $ atomically $ do
+            n <- readTVar qGenT
+            modifyTVar qGenT (+1)
+            let qid = mkQid n f
+            putTMVar qmapT $ Map.insert fp qid qmap
+            return qid
+          logMsg Info $ unwords ["Creating new qid:", show fp, "→", show n]
+          return n
     go (Walk path) = runError @NPError $ do
       root <- adaptErr $ go FileTree
       w <- walk' root path
