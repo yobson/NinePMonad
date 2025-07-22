@@ -1,4 +1,4 @@
-{-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MonoLocalBinds, DataKinds #-}
 
 module Network.NineP.Effects.Error
 ( module Control.Monad.Freer.Error
