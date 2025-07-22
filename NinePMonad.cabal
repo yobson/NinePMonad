@@ -3,7 +3,7 @@ name:               NinePMonad
 version:            0.1.0.0
 -- synopsis:
 -- description:
-license:            GPL-3.0-only
+license:            LGPL-3.0-or-later
 license-file:       LICENSE
 author:             James Hobson
 maintainer:         james@hobson.space
