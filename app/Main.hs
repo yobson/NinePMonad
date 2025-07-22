@@ -25,7 +25,11 @@ hoist ref xm = do
   writeIORef ref end
   return out
 
+conf = (defaultConf "unix!/tmp/fs.sock")
+  { logLevels = [Warning, Fatal, Info, Protocol]
+  }
+
 main :: IO ()
 main = do
   store <- newIORef 0
-  hoistFileSystemServer ((defaultConf "unix!/tmp/fs.sock") {logProt = True}) (hoist store) fs
+  hoistFileSystemServer conf (hoist store) fs

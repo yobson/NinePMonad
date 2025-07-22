@@ -37,7 +37,14 @@ import qualified Data.NineP as N
 data LogLevel = Info    -- ^ Happy
               | Warning -- ^ Melancholy
               | Fatal   -- ^ Upset
-              deriving (Eq, Show)
+              | Protocol
+              deriving (Eq)
+
+instance Show LogLevel where
+  show Info     = "INFO"
+  show Warning  = "WARN"
+  show Fatal    = "FATAL"
+  show Protocol = "PROTO"
 
 data Logger r where
   LogMsg :: LogLevel -> String -> Logger ()
@@ -57,17 +64,18 @@ runSilentLogger = interpret $ \case
   LogMsg _ _ -> return ()
   LogProto _ -> return ()
 
-runFilterLogger :: (MonadIO m, LastMember m es) => [LogLevel] -> Bool -> Eff (Logger : es) a -> Eff es a
-runFilterLogger levels proto = interpretM $ \case
+runFilterLogger :: (MonadIO m, LastMember m es) => [LogLevel] -> Eff (Logger : es) a -> Eff es a
+runFilterLogger levels = interpretM $ \case
   LogMsg level msg -> when (level `elem` levels) $ printLog level msg
-  LogProto     msg -> when proto                 $ do
-    now <- liftIO getCurrentTime
-    liftIO $ putStr $ show now
-    liftIO $ putStr "\t"
-    liftIO $ print msg
+  LogProto     msg -> when (Protocol `elem` levels) $ printLog Protocol $ show msg
 
 
 printLog :: (MonadIO m) => LogLevel -> String -> m ()
-printLog l msg = do
-  now <- liftIO getCurrentTime
-  liftIO $ putStrLn $ concat ["[", show now, "|", show l, "] ", msg]
+printLog l msg = liftIO $ do
+  now <- getZonedTime
+  liftIO $ putStr "["
+  putStr $ formatTime defaultTimeLocale "%F %k:%M:%S %q" now
+  putStr " | "
+  putStr $ show l
+  putStr "]\t"
+  putStrLn msg

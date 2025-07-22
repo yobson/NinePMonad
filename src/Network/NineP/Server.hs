@@ -40,14 +40,12 @@ import Network.NineP.Handler (handleRequest)
 -- | Server configuration
 data FSServerConf = FSServerConf
   { bindAddr  :: BindAddr    -- ^ Has a 'IsString' instance. You can provide a string such as @"tcp!192.168.2.4!8080"@
-  , logProt   :: Bool        -- ^ Log protocol messages over standard output
   , logLevels :: [LogLevel]  -- ^ Specify what kind of message to log
   }
 
 defaultConf :: BindAddr -> FSServerConf
 defaultConf addr = FSServerConf
   { bindAddr = addr
-  , logProt = False
   , logLevels = []
   }
 
@@ -83,28 +81,22 @@ serveFileSystem conf = hoistFileSystemServer conf strictID
 strictID :: a -> a
 strictID !x = x
 
-tryError :: Member (Error NPError) es => Eff es a -> Eff es (Either NPError a)
-tryError xm = (Right <$> xm) `catchError` (return . Left)
-
 -- | Host file server defined on arbitary monad by providing a natural transformation
 hoistFileSystemServer :: (MonadIO n, MonadIO m, MonadFail n) => FSServerConf -> (forall x . n x -> IO x) -> FileSystemT n () -> m ()
 hoistFileSystemServer FSServerConf{..} hoist fs = do
   globalState <- liftIO $ mkGlobalState fs
   runServer bindAddr $ \sock -> do
       err <- runM $ runError @NPError
-                  $ runFilterLogger logLevels logProt
+                  $ runFilterLogger logLevels
                   $ runMsgHandle sock
                   $ runGlobalState globalState hoist
                   $ runClientState
                   $ fix $ \loop -> do
-                    r <- tryError recvMsg
-                    case r of
-                      Left _ -> logMsg Warning $ "Failed to read message"
-                      Right msg -> handleRequest msg
+                    msg <- recvMsg
+                    handleRequest msg
                     loop
       case err of
-        Left (NPError e)  -> error $ "Something went wrong: " <> e
-        Left _ -> error "Proto error"
+        Left e  -> error $ "Something went wrong: " <> e
         Right a -> return a
 
 

@@ -29,7 +29,7 @@ library
                       Network.NineP.Effects.Error
                       Network.NineP.Effects.Logger
     other-extensions: StrictData
-    build-depends:    base ^>=4.20.1.0,
+    build-depends:    base < 5.0,
                       bytestring,
                       freer-simple >= 1.2.1.2,
                       network,
@@ -54,8 +54,9 @@ executable NinePMonad
     -- other-extensions:
     ghc-options: -threaded
     build-depends:
-        base ^>=4.20.1.0,
+        base < 5.0,
                       mtl,
+                      freer-simple,
         NinePMonad
 
     hs-source-dirs:   app

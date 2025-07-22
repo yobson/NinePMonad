@@ -52,45 +52,46 @@ initState = CLState
 data ClientState r where
   SetFid :: Word32 -> [FilePath] -> ClientState ()
   SetUName :: String -> ClientState ()
-  LookupFid :: Word32 -> ClientState [FilePath]
-  OpenFile :: Word32 -> Word8 -> ClientState Qid
-  StatFid :: Word32 -> ClientState Stat
-  StatDir :: Word32 -> ClientState [Stat]
-  GetOpenFile :: Word32 -> Word8 -> ClientState (Either (File IO) (Directory IO))
+  LookupFid :: Word32 -> ClientState (CanFail [FilePath])
+  OpenFile :: Word32 -> Word8 -> ClientState (CanFail Qid)
+  StatFid :: Word32 -> ClientState (CanFail Stat)
+  StatDir :: Word32 -> ClientState (CanFail [Stat])
+  GetOpenFile :: Word32 -> Word8 -> ClientState (CanFail (Either (File IO) (Directory IO)))
   ClunkFid :: Word32 -> ClientState ()
 makeEffect ''ClientState
 
-runClientState :: Members '[Error NPError, GlobalState, Logger] es => Eff (ClientState : es) a -> Eff es a
+runClientState :: Members '[GlobalState, Logger] es => Eff (ClientState : es) a -> Eff es a
 runClientState = evalState initState . reinterpret go
-  where go :: Members '[Error NPError, GlobalState, Logger] es => ClientState x -> Eff (State ClState : es) x
+  where go :: Members '[GlobalState, Logger] es => ClientState x -> Eff (State ClState : es) x
         go (SetFid fid path) = modify (\s -> s {fidMap = Map.insert fid path $ fidMap s})
         go (SetUName n)      = modify (\s -> s { uname = n })
         go (LookupFid fid)   = do
+          logMsg Info $ "Looking for fid: " <> show fid
           m <- gets fidMap
-          maybe (throwError $ NPError "No Fid") return $ Map.lookup fid m
-        go (OpenFile fid mode) = do
-          path <- go $ LookupFid fid
+          returnMaybe ("Fid " <> show fid <> " not found") $ Map.lookup fid m
+        go (OpenFile fid mode) = runError @NPError $ do
+          path <- adaptErr $ go $ LookupFid fid
           name <- gets uname
-          w <- walk path
+          w <- adaptErr $ walk path
           logMsg Info $ "Open file with mode: " <> show mode
           case checkPerms w name mode of
             True -> do
-              qid <- lookupQid path
+              qid <- adaptErr $ lookupQid path
               modify (\s -> s { openFiles = Map.insert fid (w,qid) $ openFiles s })
               return qid
-            False -> throwError $ NPError "Do not have permission"
-        go (StatFid fid) = do
+            False -> throwError "Do not have permission"
+        go (StatFid fid) = runError @NPError $ do
           m <- gets fidMap
           case Map.lookup fid m of
             Just path -> do
-              f <- walk path
-              q <- lookupQid path
+              f <- adaptErr $ walk path
+              q <- adaptErr $ lookupQid path
               return $ statFile f q
-            Nothing -> throwError $ NPError "File not open!"
-        go (StatDir fid) = do
-          path <- go $ LookupFid fid
+            Nothing -> throwError "File not open!"
+        go (StatDir fid) = runError @NPError $ do
+          path <- adaptErr $ go $ LookupFid fid
           logMsg Info "Found FID"
-          files <- children path
+          files <- adaptErr $ children path
           logMsg Info $ "Statting: " <> show files
           return $ map (uncurry statFile) files
         go (GetOpenFile fid mode) = do
@@ -99,9 +100,9 @@ runClientState = evalState initState . reinterpret go
             Just (f,_) -> do
               name <- gets uname
               if checkPerms f name mode
-                then return f
-                else throwError $ NPError "You don't have permission"
-            Nothing -> throwError $ NPError "File not open!"
+                then return $ Right f
+                else return $ Left "You don't have permission"
+            Nothing -> return $ Left "File not open!"
         go (ClunkFid fid) = do
           modify $ \s -> s { openFiles = Map.delete fid (openFiles s)
                            , fidMap    = Map.delete fid (fidMap s)

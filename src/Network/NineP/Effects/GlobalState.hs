@@ -43,10 +43,10 @@ data Tree m = TDir  (Directory m) [Tree m]
             deriving (Show)
 
 data GlobalState r where
-  LookupQid   :: [FilePath] -> GlobalState Qid
-  FileTree    :: GlobalState (Tree IO)
-  Walk        :: [FilePath] -> GlobalState (Either (File IO) (Directory IO))
-  Children    :: [FilePath] -> GlobalState [(Either (File IO) (Directory IO), Qid)]
+  LookupQid   :: [FilePath] -> GlobalState (CanFail Qid)
+  FileTree    :: GlobalState (CanFail (Tree IO))
+  Walk        :: [FilePath] -> GlobalState (CanFail (Either (File IO) (Directory IO)))
+  Children    :: [FilePath] -> GlobalState (CanFail [(Either (File IO) (Directory IO), Qid)])
 
 data GState m = GState 
   { fileSystem :: TMVar (FileSystemT m ())
@@ -61,40 +61,42 @@ mkGlobalState fs = do
   qmap <-  newTMVarIO Map.empty
   return $ GState fsT qidT qmap
 
-findFile :: Members [Error NPError, Logger] es => [Tree m] -> String -> Eff es (Tree m)
+findFile :: Member (Logger) es => [Tree m] -> String -> Eff (Error NPError : es) (Tree m)
 findFile tr n = case find go tr of
   Just f  -> logMsg Info ("Found: " <> n) >> return f
-  Nothing -> throwError $ NPError "File not found"
+  Nothing -> do
+    throwError "File not found"
   where go (TFile File{..}) = fileName == n
         go (TDir Directory{..} _) = dirName == n
 
-walk' :: Members [Error NPError, Logger] es => Tree m -> [FilePath] -> Eff es (Tree m)
+walk' :: Member Logger es => Tree m -> [FilePath] -> Eff (Error NPError : es) (Tree m)
 walk' tree@(TFile File{..}) [file] | fileName == file = return tree
 walk' tree@(TDir Directory{..} _) [file] | dirName == file = return tree
 walk' (TDir _ kids) (_:x:xs) = do
   logMsg Info $ "Looking for: " <> x
   f <- findFile kids x
   walk' f (x:xs)
-walk' _ _ = throwError $ NPError "File not found!"
+walk' _ _ = do
+  throwError "File not found!"
 
 mkQid :: Word64 -> Tree m -> Qid
 mkQid path (TDir _ _) = Qid {qid_typ = 0x80, qid_vers = 0, qid_path = path}
 mkQid path (TFile _ ) = Qid {qid_typ = 0x00, qid_vers = 0, qid_path = path}
   
 
-runGlobalState :: forall es m a . (LastMember IO es, Members '[Error NPError, Logger] es, Monad m) => GState m -> (m ~> IO) -> Eff (GlobalState : es) a -> Eff es a
+runGlobalState :: forall es m a . (LastMember IO es, Members '[Logger] es, Monad m) => GState m -> (m ~> IO) -> Eff (GlobalState : es) a -> Eff es a
 runGlobalState initState runM eff =
   evalState initState $ reinterpret go eff
   where
-    go :: (LastMember IO es, Members '[Error NPError, Logger] es) => GlobalState x -> Eff (State (GState m) : es) x
+    go :: (LastMember IO es, Members '[Logger] es) => GlobalState x -> Eff (State (GState m) : es) x
     go FileTree = do
       var <- gets @(GState m) fileSystem
       fsystem <- send $ atomically $ takeTMVar var
       tree <- send $ evalTree runM fsystem
       send $ atomically $ putTMVar var fsystem
       case tree of
-        [x] -> return x
-        _   -> throwError $ NPError "Tree has multiple roots!"
+        [x] -> return $ Right x
+        _   -> return $ Left "Tree has multiple roots!"
     go (LookupQid fp) = do
       logMsg Info $ "Looking up: " <> show fp
       qmapT <- gets @(GState m) qidMap
@@ -103,36 +105,36 @@ runGlobalState initState runM eff =
         Just qp -> do
           logMsg Info "Qid Found"
           send $ atomically $ putTMVar qmapT qmap
-          return qp
+          return $ Right $ qp
         Nothing -> do
           logMsg Info "Qid not found!"
           qGenT <- gets @(GState m) nextQID
-          root  <- go FileTree
-          f     <- walk' root fp
-          n <- send $ atomically $ do
-            n <- readTVar qGenT
-            modifyTVar qGenT (+1)
-            let qid = mkQid n f
-            putTMVar qmapT $ Map.insert fp qid qmap
-            return qid
-          logMsg Info $ unwords ["Creating new qid:", show fp, "→", show n]
-          return n
-    go (Walk path) = do
-      root  <- go FileTree
+          withErr (go FileTree) $ \root ->
+            withErr (runError @NPError $ walk' root fp) $ \f -> do
+              n <- send $ atomically $ do
+                n <- readTVar qGenT
+                modifyTVar qGenT (+1)
+                let qid = mkQid n f
+                putTMVar qmapT $ Map.insert fp qid qmap
+                return qid
+              logMsg Info $ unwords ["Creating new qid:", show fp, "→", show n]
+              return $ Right n
+    go (Walk path) = runError @NPError $ do
+      root <- adaptErr $ go FileTree
       w <- walk' root path
       return $ toEither w
-    go (Children path) = do
-      root  <- go FileTree
+    go (Children path) = runError @NPError $ do
+      root  <- adaptErr $ go FileTree
       logMsg Info "Got root"
       logMsg Info $ "Walking to " <> show path
       node <- walk' root path
       logMsg Info $ "Got: " <> show node
       case node of
-        TFile _     -> throwError $ NPError "File has no children"
+        TFile _     -> throwError "File has no children"
         TDir _ kids -> do
           let files = map toEither kids
               names = map (getProp #name) files
-          qids <- mapM (go . LookupQid . (snoc path)) names
+          qids <- mapM (adaptErr . go . LookupQid . (snoc path)) names
           return $ zip files qids
 
 toEither :: Tree m -> Either (File m) (Directory m)
@@ -161,7 +163,6 @@ evalFile runM f = File
   , fileGroup = fileGroup f
   , fileRead = evalReader runM <$> fileRead f
   , fileWrite = evalWriter runM <$> fileWrite f
-  , fileQIDPath = fileQIDPath f
   }
 {-# INLINE evalFile #-}
 
@@ -171,7 +172,6 @@ evalDir _ d = Directory
   , dirPermissions = dirPermissions d
   , dirOwner = dirOwner d
   , dirGroup = dirGroup d
-  , dirQIDPath = dirQIDPath d
   }
 {-# INLINE evalDir #-}
 

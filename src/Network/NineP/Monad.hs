@@ -32,8 +32,8 @@ The full list of attributes are:
 Files also recive 'Reader' and 'Writer' objects:
 
 > dir "/" $ do
->   file "file1" (Reader $ return "Hello world")
->   file "file2" (Writer $ B.putStrLn)
+>   file "file1" (StringR $ return "Hello world")
+>   file "file2" (StringW $ putStrLn)
 -}
 
 module Network.NineP.Monad
@@ -69,11 +69,10 @@ data File m = File
   , fileGroup       :: String
   , fileRead        :: Maybe (RawReader m)
   , fileWrite       :: Maybe (RawWriter m)
-  , fileQIDPath     :: Word64
   }
 
 instance Show (File m) where
-  show File{..} = "<<" <> show fileQIDPath <> ":" <> fileName <> ">>"
+  show File{..} = "<<" <> fileName <> ">>"
 
 -- | Base type for directories
 data Directory m = Directory
@@ -81,11 +80,10 @@ data Directory m = Directory
   , dirOwner       :: String
   , dirGroup       :: String
   , dirPermissions :: Word16
-  , dirQIDPath     :: Word64
   }
 
 instance Show (Directory m) where
-  show Directory{..} = "<<" <> show dirQIDPath <> ":" <> dirName <> ">>"
+  show Directory{..} = "<<" <> ":" <> dirName <> ">>"
 
 -- | Raw reader on lazy bytestrings
 newtype RawReader m = RawReader (Word64 -> Word32 -> m B.ByteString)
@@ -150,19 +148,16 @@ instance Setter (File m) "owner"   String        where set _ o v = o {fileOwner 
 instance Setter (File m) "group"   String        where set _ o v = o {fileGroup       = v}
 instance Setter (File m) "read"    (RawReader m) where set _ o v = o {fileRead        = Just v}
 instance Setter (File m) "write"   (RawWriter m) where set _ o v = o {fileWrite       = Just v}
-instance Setter (File m) "qidPath" Word64        where set _ o v = o {fileQIDPath     = v}
 
 instance Setter (Directory m) "name"    String where set _ o v = o {dirName        = v}
 instance Setter (Directory m) "perms"   Word16 where set _ o v = o {dirPermissions = v}
 instance Setter (Directory m) "owner"   String where set _ o v = o {dirOwner       = v}
 instance Setter (Directory m) "group"   String where set _ o v = o {dirGroup       = v}
-instance Setter (Directory m) "qidPath" Word64 where set _ o v = o {dirQIDPath     = v}
 
 instance Getter (File m) "name"    String     where grab _ = fileName
 instance Getter (File m) "perms"   Word16     where grab _ = filePermissions
 instance Getter (File m) "owner"   String     where grab _ = fileOwner
 instance Getter (File m) "group"   String     where grab _ = fileGroup
-instance Getter (File m) "qidPath" Word64     where grab _ = fileQIDPath
 instance Getter (File m) "read"  (Maybe (RawReader m)) where grab _ = fileRead
 instance Getter (File m) "write" (Maybe (RawWriter m)) where grab _ = fileWrite
 
@@ -170,13 +165,11 @@ instance Getter (Directory m) "name"    String where grab _ = dirName
 instance Getter (Directory m) "perms"   Word16 where grab _ = dirPermissions
 instance Getter (Directory m) "owner"   String where grab _ = dirOwner
 instance Getter (Directory m) "group"   String where grab _ = dirGroup
-instance Getter (Directory m) "qidPath" Word64 where grab _ = dirQIDPath
 
 instance Getter (Either (File m) (Directory m)) "name"    String where grab _ = either fileName dirName
 instance Getter (Either (File m) (Directory m)) "perms"   Word16 where grab _ = either filePermissions dirPermissions
 instance Getter (Either (File m) (Directory m)) "owner"   String where grab _ = either fileOwner dirOwner
 instance Getter (Either (File m) (Directory m)) "group"   String where grab _ = either fileGroup dirGroup
-instance Getter (Either (File m) (Directory m)) "qidPath" Word64 where grab _ = either fileQIDPath dirQIDPath
 
 
 getProp :: (IsLabel l (SetterProxy l), Getter obj l b) => SetterProxy l -> obj -> b
@@ -189,7 +182,6 @@ emptyDir = Directory
   , dirPermissions = 0o777
   , dirOwner       = "nobody"
   , dirGroup       = "nobody"
-  , dirQIDPath     = 0
   }
 
 emptyFile :: (Monad m) => File m
@@ -200,7 +192,6 @@ emptyFile = File
   , fileGroup       = "nobody"
   , fileRead        = Nothing
   , fileWrite       = Nothing
-  , fileQIDPath     = 0
   }
 
 -- | This is for setting properties on files and directories using @-XOverloadedLabels@
@@ -292,8 +283,8 @@ instance MonadState s m => MonadState s (FileSystemT m) where
 
 instance MonadReader r m => MonadReader r (FileSystemT m) where
   ask = lift ask
-  local f (Pure a) = Pure a
+  local _ (Pure a) = Pure a
   local f (Free op) = Free $ case op of
     FileNode fi r -> FileNode fi (local f r)
-    DirNode dir c r -> DirNode dir (local f c) (local f r)
+    DirNode di c r -> DirNode di (local f c) (local f r)
     Embed xm  -> Embed (local f xm)

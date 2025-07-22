@@ -36,9 +36,9 @@ import Data.Binary.Get
 import Data.Binary.Put
 import Network.Socket
 import Network.Socket.ByteString.Lazy (sendAll, recv)
-import Control.Exception (IOException, try, throwIO)
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
+import Control.Exception (IOException, try)
+-- import qualified Data.ByteString as B
+-- import qualified Data.ByteString.Lazy as BL
 import GHC.Int
 
 import Network.NineP.Effects.Error
@@ -53,23 +53,16 @@ makeEffect ''NPMsg
 
 adapt :: (MonadIO m, LastMember m es, Members [Error NPError, State (LocalState m)] es) => IO a -> Eff es a
 adapt m = liftIO (try m) >>= \case
-  Left (e::IOException) -> throwError . NPError $ show e
+  Left (e::IOException) -> throwError $ show e
   Right v               -> return v
 
-feedIncremental :: Decoder N.Msg -> IO BL.ByteString -> IO (N.Msg, B.ByteString)
-feedIncremental decoder@(Partial _) feeder = do
-  !input <- feeder
-  feedIncremental (pushChunks decoder input) feeder
-feedIncremental (Done res _ x) _ = return (x, res)
-feedIncremental _ _ = fail "Failed to parse"
-
 data LocalState (m :: Type -> Type) = LState
-  { leftOver :: B.ByteString
-  , msgSize  :: Int64
+  { -- leftOver :: B.ByteString
+  msgSize  :: Int64
   }
 
 initialState :: LocalState m
-initialState = LState B.empty 4096
+initialState = LState 4096
 
 runMsgHandle 
   :: forall m es a 
@@ -82,7 +75,7 @@ runMsgHandle sock = evalState initialState . reinterpret go
       -- residual <- gets @(LocalState m) leftOver
       size     <- gets @(LocalState m) msgSize
       -- let !decoder = runGetIncremental (N.get @N.Msg) `pushChunk` residual
-      bytes <- liftIO $ recv sock size
+      bytes <- adapt $ recv sock size
       let dec = runGet N.get bytes
       logProto dec
       return dec
