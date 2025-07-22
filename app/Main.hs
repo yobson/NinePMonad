@@ -25,9 +25,8 @@ hoist ref xm = do
   writeIORef ref end
   return out
 
+conf :: FSServerConf
 conf = (defaultConf "unix!/tmp/fs.sock")
-  { logLevels = [Warning, Fatal, Info, Protocol]
-  }
 
 main :: IO ()
 main = do
