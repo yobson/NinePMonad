@@ -42,6 +42,7 @@ handleTyp TTread    tag body = handleTRead    tag body
 handleTyp TTwrite   tag body = handleTWrite   tag body
 handleTyp TTclunk   tag body = handleTClunk   tag body
 handleTyp TTstat    tag body = handleTStat    tag body
+handleTyp TTwstat   tag body = handleTWStat   tag body
 handleTyp _ _ _ = throwError "Can't handle this kind of message"
 {-# INLINE handleTyp #-}
 
@@ -138,6 +139,13 @@ handleTStat tag (Tstat fid) = do
   sendMsg $ Msg TRstat tag $ Rstat [st]
 handleTStat _ _ = throwError "Malformed Request"
 {-# INLINE handleTStat #-}
+
+handleTWStat :: Members '[NPMsg, Error NPError, ClientState, Logger] es => Word16 -> VarMsg -> Eff es ()
+handleTWStat tag (Twstat _ _) = do
+  logMsg Info "WSTAT"
+  sendMsg $ Msg TRwstat tag Rwstat
+handleTWStat _ _ = throwError "Malformed Request"
+{-# INLINE handleTWStat #-}
 
 pattern ModeRead, ModeWrite, ModeRW, ModeExec :: Word8
 pattern ModeRead  = 4

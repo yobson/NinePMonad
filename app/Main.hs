@@ -16,6 +16,7 @@ fRead = do
 fs :: FileSystemT (StateT Int IO) ()
 fs = dir "/" $ do
       file "count" (StringR fRead)
+      file "talk" [#perms := 0o777] (StringW $ liftIO . putStrLn)
 
 hoist :: IORef Int -> StateT Int IO x -> IO x
 hoist ref xm = do
@@ -25,7 +26,7 @@ hoist ref xm = do
   return out
 
 conf :: FSServerConf
-conf = (defaultConf "unix!/tmp/fs.sock")
+conf = (defaultConf "tcp!0.0.0.0!8080") { logLevels = [Protocol, Warning, Info]}
 
 main :: IO ()
 main = do
