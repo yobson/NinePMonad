@@ -32,6 +32,10 @@ import Control.Monad
 import Control.Monad.IO.Class
 import qualified Control.Exception as E
 import Control.Concurrent (forkFinally)
+import System.Posix.Env
+import System.FilePath
+import System.Posix.Temp
+import System.Posix.Process
 
 import Network.NineP.Monad
 import Network.NineP.Effects
@@ -49,13 +53,14 @@ defaultConf addr = FSServerConf
   , logLevels = []
   }
 
-data BindAddr = UnixDomain FilePath | Tcp HostName Word16
+data BindAddr = UnixDomain FilePath | Tcp HostName Word16 | Path FilePath
   deriving Eq
 
 ninePBindFmt :: Parser BindAddr
 ninePBindFmt =  UnixDomain <$> (asciiCI "unix!" *> filePathFmt)
             <|> Tcp <$> (asciiCI "tcp!" *> ipFmt) <*> ("!" *> decimal)
             <|> Tcp <$> (asciiCI "tcp!" *> ipFmt) <*> pure 564
+            <|> Path <$> filePathFmt
 
 instance IsString BindAddr where
   fromString (pack -> t) = case parseOnly (ninePBindFmt <* endOfInput) t of
@@ -72,6 +77,7 @@ instance Show BindAddr where
   show (UnixDomain fp) = "unix!" <> fp
   show (Tcp ip 564)    = "tcp!"  <> ip
   show (Tcp ip port)   = "tcp!"  <> ip <> "!" <> show port
+  show (Path path)     = path
 
 
 -- | Host file server defined in terms of 'FileSystem'
@@ -118,5 +124,15 @@ runUnixServer fp server = E.bracket openSock close loop
           addrCanonName  = Nothing
 
 runServer :: (MonadIO m) => BindAddr -> (Socket -> IO a) -> m a
-runServer (Tcp host port) = liftIO . runTCPServer (Just host) (show port)
-runServer (UnixDomain fp) = liftIO . runUnixServer fp
+runServer (Tcp host port) action = liftIO $ runTCPServer (Just host) (show port) action
+runServer (UnixDomain fp) action = liftIO $ runUnixServer fp action
+runServer (Path path) action = liftIO $ do
+  p9dir' <- getEnv "PLAN9"
+  case p9dir' of
+    Nothing -> error "set PLAN9 environment variable"
+    Just p9dir -> do
+      let bin = p9dir </> "bin" </> "9pfuse"
+      tmpdir <- mkdtemp ".9pmonad"
+      let socketFile = tmpdir </> "filesystem.sock"
+      _ <- forkProcess $ void $ runServer (UnixDomain socketFile) action
+      executeFile bin False [socketFile, path] Nothing

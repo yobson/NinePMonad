@@ -12,6 +12,7 @@ synopsis:        9P Server Library
 
 library
     exposed-modules:
+        Network.NineP
         Network.NineP.Monad
         Network.NineP.Server
 
@@ -42,6 +43,7 @@ library
         containers ==0.7.*,
         binary >=0.8.9.3 && <0.9,
         filepath >=1.5.4.0 && <1.6,
+        unix -any,
         time -any
 
 executable NinePMonad

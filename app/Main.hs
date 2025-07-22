@@ -2,8 +2,7 @@
 
 module Main where
 
-import Network.NineP.Monad
-import Network.NineP.Server
+import Network.NineP
 import Control.Monad.State
 import Data.IORef
 
@@ -26,7 +25,7 @@ hoist ref xm = do
   return out
 
 conf :: FSServerConf
-conf = (defaultConf "unix!/tmp/fs.sock")
+conf = (defaultConf "/tmp/test")
 
 main :: IO ()
 main = do
