@@ -10,6 +10,11 @@ build-type:      Simple
 extra-doc-files: CHANGELOG.md
 synopsis:        9P Server Library
 
+Flag Example
+  Description: Build example application
+  Default:     False
+  Manual:      True
+
 library
     exposed-modules:
         Network.NineP
@@ -47,6 +52,10 @@ library
         time -any
 
 executable NinePMonad
+    if flag(Example)
+      buildable: True
+    else
+      buildable: False
     main-is:          Main.hs
     hs-source-dirs:   app
     default-language: GHC2021
