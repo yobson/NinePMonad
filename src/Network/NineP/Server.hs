@@ -1,10 +1,10 @@
-{-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards, TypeApplications, FlexibleContexts #-}
+{-# LANGUAGE RankNTypes, OverloadedStrings, ViewPatterns, RecordWildCards, TypeApplications, FlexibleContexts, MonoLocalBinds #-}
 
 {-|
 Module      : Network.NineP.Server
 Description : Running file system servers
 Maintainer  : james@hobson.space
-Copyright   : (c) James Hobson, 2024
+Copyright   : (c) James Hobson, 2025
 Stability   : experimental
 Portability : POSIX
 -}
@@ -12,6 +12,7 @@ Portability : POSIX
 module Network.NineP.Server
 ( serveFileSystem
 , hoistFileSystemServer
+, defaultConf
 , BindAddr(..)
 , FSServerConf(..)
 , LogLevel(..)
@@ -33,14 +34,19 @@ import qualified Control.Exception as E
 import Control.Concurrent (forkFinally)
 
 import Network.NineP.Monad
-import Network.NineP.Handler
 import Network.NineP.Effects
+import Network.NineP.Handler (handleRequest)
 
 -- | Server configuration
 data FSServerConf = FSServerConf
   { bindAddr  :: BindAddr    -- ^ Has a 'IsString' instance. You can provide a string such as @"tcp!192.168.2.4!8080"@
-  , logProt   :: Bool        -- ^ Log protocol messages over standard output
   , logLevels :: [LogLevel]  -- ^ Specify what kind of message to log
+  }
+
+defaultConf :: BindAddr -> FSServerConf
+defaultConf addr = FSServerConf
+  { bindAddr = addr
+  , logLevels = []
   }
 
 data BindAddr = UnixDomain FilePath | Tcp HostName Word16
@@ -70,19 +76,29 @@ instance Show BindAddr where
 
 -- | Host file server defined in terms of 'FileSystem'
 serveFileSystem :: MonadIO m => FSServerConf -> FileSystem () -> m ()
-serveFileSystem conf = hoistFileSystemServer conf id
+serveFileSystem conf = hoistFileSystemServer conf strictID
 
-tryError :: Member (Error e) es => Eff es a -> Eff es (Either e a)
-tryError xm = (Right <$> xm) `catchError` (return . Left)
+strictID :: a -> a
+strictID !x = x
 
 -- | Host file server defined on arbitary monad by providing a natural transformation
 hoistFileSystemServer :: (MonadIO n, MonadIO m, MonadFail n) => FSServerConf -> (forall x . n x -> IO x) -> FileSystemT n () -> m ()
-hoistFileSystemServer FSServerConf{..} hoist fs = runServer bindAddr $ \sock -> hoist $ runAppThrow logProt logLevels sock fs $ fix $ \loop -> do
-  msg <- recvMsg
-  res <- tryError @NPError $ handleRequest msg
-  case res of
-    Left e -> logMsg Fatal $ "Thread closed due to error: " <> show e
-    Right _    -> loop
+hoistFileSystemServer FSServerConf{..} hoist fs = do
+  globalState <- liftIO $ mkGlobalState fs
+  runServer bindAddr $ \sock -> do
+      err <- runM $ runError @NPError
+                  $ runFilterLogger logLevels
+                  $ runMsgHandle sock
+                  $ runGlobalState globalState hoist
+                  $ runClientState
+                  $ fix $ \loop -> do
+                    msg <- recvMsg
+                    handleRequest msg
+                    loop
+      case err of
+        Left e  -> error $ "Something went wrong: " <> e
+        Right a -> return a
+
 
 runUnixServer :: FilePath -> (Socket -> IO a) -> IO a
 runUnixServer fp server = E.bracket openSock close loop

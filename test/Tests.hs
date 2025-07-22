@@ -77,4 +77,4 @@ instance Arbitrary Plan9String where
          if port == 564
             then Plan9String <$> fmap ("tcp!" <>) (getHostString <$> arbitrary)
             else Plan9String <$> fmap (\host -> "tcp!" <> host <> show port) (getHostString <$> arbitrary)
-         
+      

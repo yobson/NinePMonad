@@ -1,4 +1,4 @@
-# Revision history for NineP-Monad
+# Revision history for NinePMonad
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

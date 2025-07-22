@@ -37,7 +37,8 @@ import Data.Binary.Put
 import Network.Socket
 import Network.Socket.ByteString.Lazy (sendAll, recv)
 import Control.Exception (IOException, try)
-import qualified Data.ByteString.Lazy as BL
+-- import qualified Data.ByteString as B
+-- import qualified Data.ByteString.Lazy as BL
 import GHC.Int
 
 import Network.NineP.Effects.Error
@@ -52,22 +53,16 @@ makeEffect ''NPMsg
 
 adapt :: (MonadIO m, LastMember m es, Members [Error NPError, State (LocalState m)] es) => IO a -> Eff es a
 adapt m = liftIO (try m) >>= \case
-  Left (e::IOException) -> throwError . NPError $ show e
+  Left (e::IOException) -> throwError $ show e
   Right v               -> return v
 
-feedIncremental :: (Monad m) => Decoder a -> m BL.ByteString -> m (Decoder a)
-feedIncremental decoder@(Partial _) feeder = do
-  input <- feeder
-  feedIncremental (pushChunks decoder input) feeder
-feedIncremental decoder _ = return decoder
-
 data LocalState (m :: Type -> Type) = LState
-  { leftOver :: BL.ByteString
-  , msgSize  :: Int64
+  { -- leftOver :: B.ByteString
+  msgSize  :: Int64
   }
 
 initialState :: LocalState m
-initialState = LState BL.empty 4096
+initialState = LState 4096
 
 runMsgHandle 
   :: forall m es a 
@@ -77,15 +72,16 @@ runMsgHandle sock = evalState initialState . reinterpret go
   where 
     go :: (LastMember m (State (LocalState m) : es)) => NPMsg x -> Eff (State (LocalState m) : es) x
     go RecvMsg = do
-      residual <- gets @(LocalState m) leftOver
+      -- residual <- gets @(LocalState m) leftOver
       size     <- gets @(LocalState m) msgSize
-      let decoder = runGetIncremental (N.get @N.Msg) `pushChunks` residual
-      result <- adapt $ feedIncremental decoder (recv sock size)
-      case result of --TODO: Better Errors
-        Fail {}      -> throwError $ NPError "msg decode error"
-        Partial _    -> throwError $ NPError "Impossible state"
-        Done res _ x -> modify @(LocalState m) (\s -> s{leftOver = BL.fromStrict res}) >> logProto x >> return x
+      -- let !decoder = runGetIncremental (N.get @N.Msg) `pushChunk` residual
+      bytes <- adapt $ recv sock size
+      let dec = runGet N.get bytes
+      logProto dec
+      return dec
+      -- (res, left) <- liftIO $ feedIncremental decoder (liftIO $ recv sock size)
+      --modify @(LocalState m) (\s -> s {leftOver = left})
     go (SendMsg msg) = do
       logProto msg
-      adapt $ sendAll sock $ runPut (N.put msg)
+      liftIO $ sendAll sock $ runPut (N.put msg)
     go (SetMsgSize w) = modify @(LocalState m) $ \s -> s{msgSize = fromIntegral w}

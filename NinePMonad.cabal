@@ -1,0 +1,68 @@
+cabal-version:   3.0
+name:            NinePMonad
+version:         0.1.0.0
+license:         LGPL-3.0-or-later
+license-file:    LICENSE
+maintainer:      james@hobson.space
+author:          James Hobson
+category:        Network
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+synopsis:        9P Server Library
+
+library
+    exposed-modules:
+        Network.NineP.Monad
+        Network.NineP.Server
+
+    hs-source-dirs:   src
+    other-modules:
+        Network.NineP.Handler
+        Network.NineP.Effects
+        Network.NineP.Effects.Msg
+        Network.NineP.Effects.ClientState
+        Network.NineP.Effects.GlobalState
+        Network.NineP.Effects.Error
+        Network.NineP.Effects.Logger
+
+    default-language: GHC2021
+    other-extensions: StrictData
+    ghc-options:      -Wall
+    build-depends:
+        base >=4.16.4.0 && <5.0,
+        bytestring >=0.11.4.0 && <0.13,
+        freer-simple >=1.2.1.2,
+        network -any,
+        mtl -any,
+        network-run -any,
+        stm >=2.5.3.1 && <2.6,
+        NineP -any,
+        attoparsec -any,
+        text -any,
+        containers ==0.7.*,
+        binary >=0.8.9.3 && <0.9,
+        filepath >=1.5.4.0 && <1.6,
+        time -any
+
+executable NinePMonad
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    default-language: GHC2021
+    ghc-options:      -Wall -threaded
+    build-depends:
+        base >=4.16.1.0 && <5.0,
+        mtl -any,
+        NinePMonad -any
+
+test-suite NineP-Monad-test
+    type:             detailed-0.9
+    test-module:      Tests
+    hs-source-dirs:   test
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base >=4.16.4.0 && <5,
+        Cabal >=3.2.1.0 && <3.13,
+        QuickCheck -any,
+        cabal-detailed-quickcheck -any,
+        NinePMonad -any
