@@ -86,10 +86,18 @@ instance Show (Directory m) where
   show Directory{..} = "<<" <> ":" <> dirName <> ">>"
 
 -- | Raw reader on lazy bytestrings
-newtype RawReader m = RawReader (Word64 -> Word32 -> m B.ByteString)
+newtype RawReader m = RawReader
+  (  Word64 -- ^ Offset
+  -> Word32 -- ^ Bytes Request
+  -> m B.ByteString
+  )
 
 -- | Raw writer on lazy bytestrings
-newtype RawWriter m = RawWriter (Word64 -> B.ByteString -> m ())
+newtype RawWriter m = RawWriter 
+  (  Word64 -- ^ Offset
+  -> B.ByteString 
+  -> m ()
+  )
 
 -- | Raw reader on lazy bytestrings
 newtype StringReader m = StringR (m String)
